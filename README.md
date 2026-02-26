@@ -10,15 +10,13 @@ GSE181919 comprises 37 tissue specimens collected from 23 HNSCC patients, spanni
 
 Ten major cell types were annotated across the dataset: T cells, Fibroblasts, Malignant cells, B/Plasma cells, Macrophages, Endothelial cells, Dendritic cells, Epithelial cells, Myocytes and Mast cells.
 
-Raw data was downloaded manually from GEO database:
-1. GSE181919_UMI_counts.txt.gz - contains the full gene × cell UMI count matrix (20,000 genes × 54,239 cells), and 
-2. GSE181919_Barcode_metadata.txt.gz - contains 8 cell-level metadata columns: patient.id (23 patients), sample.id (37 samples), Gender, Age, tissue.type (NL/LP/CA/LN), subsite (OC/OP/HP), hpv (HPV+/HPV–), and cell.type (10 annotated types).
 
 # Analysis Pipeline
 # Step 1 — Data Acquisition
 Raw data was downloaded manually from GEO database:
 1. GSE181919_UMI_counts.txt.gz - contains the full gene × cell UMI count matrix (20,000 genes × 54,239 cells), and 
 2. GSE181919_Barcode_metadata.txt.gz - contains 8 cell-level metadata columns: patient.id (23 patients), sample.id (37 samples), Gender, Age, tissue.type (NL/LP/CA/LN), subsite (OC/OP/HP), hpv (HPV+/HPV–), and cell.type (10 annotated types).
+
 
 # Step 2 — Seurat Object Creation (01_GSE181919_Creating_Seurat_Object.Rmd)
 Loaded UMI count matrix (20,000 genes × 54,239 cells)
@@ -29,8 +27,42 @@ Applied quality thresholds:
 min.cells = 3 — genes detected in at least 3 cells
 min.features = 200 — cells with at least 200 genes detected
 
-
 Final Seurat object: 54,236 cells × 15,086 genes
 Added all 8 metadata columns (tissue.type, hpv, cell.type, etc.)
 Output: 01_GSE181919_seurat_raw.rds
+
+
+# Step 3 — Quality Control & Batch Correction (02_GSE181919_QC_BatchCorrection.Rmd)
+# QC Filtering:
+Four sequential filters were applied to remove low-quality cells from the raw Seurat object. 
+a) Cells were filtered by gene count, requiring a minimum of 200 genes (to remove empty droplets) and a maximum of 8,000 genes (to remove likely doublets) — notably, no cells were removed by either threshold, suggesting the authors had already performed basic QC before depositing to GEO. 
+
+b) Cells with mitochondrial gene content exceeding 15% were removed as markers of dying or stressed cells, eliminating 43 cells. 
+
+c) A Mahalanobis distance-based filter was applied to remove the worst 5% of statistical outliers by total UMI count, removing 2,344 cells. 
+
+d) Ribosomal gene filtering, commonly applied in non-tumor datasets, was intentionally skipped — HNSCC tumor cells including malignant epithelial cells, fibroblasts, and immune cells naturally express high levels of ribosomal genes due to active protein synthesis, and applying a standard 10% threshold would have removed over 97% of cells. 
+
+After all filters, 51,849 cells were retained, representing a 95.6% retention rate, confirming the high quality of this dataset.
+
+Note on ribosomal filtering: HNSCC tumor cells (malignant epithelial, fibroblasts, immune cells) naturally express high levels of ribosomal genes due to active protein synthesis. Applying a standard 10% ribosomal threshold would remove >97% of cells. This filter is therefore intentionally skipped for this cancer dataset.
+
+# Normalization & Dimensionality Reduction:
+LogNormalize normalization (scale factor = 10,000)
+2,500 highly variable genes selected (VST method)
+PCA computed (100 PCs)
+50 PCs selected based on elbow plot analysis (explains 89.3% of variance)
+UMAP computed on PCA embeddings → 33 clusters (unintegrated)
+
+# Batch Correction (Harmony):
+Batch variable: patient.id (23 patients — true source of technical variation)
+Harmony corrected UMAP → 30 clusters (integrated)
+Same-batch fraction reduced from 0.470 → 0.247 (47.4% reduction)
+All 23 patients show improved mixing after correction
+
+# Outputs:
+02_GSE181919_seurat_qc_filtered.rds — QC filtered object (51,849 cells)
+03_GSE181919_seurat_pca_umap.rds — normalized + PCA + UMAP (unintegrated)
+04_GSE181919_harmony_corrected.rds — Harmony batch corrected (final object for downstream analysis)
+GSE181919_QC_metrics.csv — per-sample QC summary table
 
