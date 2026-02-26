@@ -60,9 +60,15 @@ Harmony corrected UMAP → 30 clusters (integrated)
 Same-batch fraction reduced from 0.470 → 0.247 (47.4% reduction)
 All 23 patients show improved mixing after correction
 
-# Outputs:
-02_GSE181919_seurat_qc_filtered.rds — QC filtered object (51,849 cells)
-03_GSE181919_seurat_pca_umap.rds — normalized + PCA + UMAP (unintegrated)
-04_GSE181919_harmony_corrected.rds — Harmony batch corrected (final object for downstream analysis)
-GSE181919_QC_metrics.csv — per-sample QC summary table
+# Plots Generated:
+# Quality Control (GSE181919_Quality Control.pdf)
+Pre-QC and Post-QC violin plots for nCount_RNA, nFeature_RNA, percent.mt and percent.rb — distributions shown per sample, colored by tissue type (NL/LP/CA/LN)
+Pre-QC and Post-QC density scatter plots of log1p(nCount_RNA) vs log1p(nFeature_RNA) colored by tissue type, with marginal histograms
+
+# Dimensionality Reduction (GSE181919_ElbowPlot.pdf)
+PCA elbow plot showing variance explained per PC — used to select 50 PCs (89.3% variance)
+
+# Batch Correction (GSE181919_Batch Correction.pdf)
+UMAP plots before and after Harmony correction, colored by tissue type and by patient ID — visually confirms batch effect removal
+KNN batch mixing bar plot comparing same-batch fraction per patient before vs after Harmony — quantifies the 47.4% reduction in batch effect
 
