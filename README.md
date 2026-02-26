@@ -19,16 +19,16 @@ Raw data was downloaded manually from GEO database:
 
 
 # Step 2 — Seurat Object Creation (01_GSE181919_Creating_Seurat_Object.Rmd)
-Loaded UMI count matrix (20,000 genes × 54,239 cells)
-Fixed cell barcode format mismatch (.(dot) → -(hypen))
-Filtered to 15,086 protein-coding genes (removed 4,914 non-coding)
+a) Loaded UMI count matrix (20,000 genes × 54,239 cells)
+b) Fixed cell barcode format mismatch (.(dot) → -(hypen))
+c) Filtered to 15,086 protein-coding genes (removed 4,914 non-coding)
 
 Applied quality thresholds:
-min.cells = 3 — genes detected in at least 3 cells
-min.features = 200 — cells with at least 200 genes detected
+a) min.cells = 3 — genes detected in at least 3 cells
+b) min.features = 200 — cells with at least 200 genes detected
 
-Final Seurat object: 54,236 cells × 15,086 genes
-Added all 8 metadata columns (tissue.type, hpv, cell.type, etc.)
+Final Seurat object contains 54,236 cells × 15,086 genes.
+Added all 8 metadata columns (tissue.type, hpv, cell.type, etc.).
 Output: 01_GSE181919_seurat_raw.rds
 
 
@@ -48,27 +48,27 @@ After all filters, 51,849 cells were retained, representing a 95.6% retention ra
 Note on ribosomal filtering: HNSCC tumor cells (malignant epithelial, fibroblasts, immune cells) naturally express high levels of ribosomal genes due to active protein synthesis. Applying a standard 10% ribosomal threshold would remove >97% of cells. This filter is therefore intentionally skipped for this cancer dataset.
 
 # Normalization & Dimensionality Reduction:
-LogNormalize normalization (scale factor = 10,000)
-2,500 highly variable genes selected (VST method)
-PCA computed (100 PCs)
-50 PCs selected based on elbow plot analysis (explains 89.3% of variance)
-UMAP computed on PCA embeddings → 33 clusters (unintegrated)
+a) LogNormalize normalization (scale factor = 10,000)
+b) 2,500 highly variable genes selected (VST method)
+c) PCA computed (100 PCs)
+d) 50 PCs selected based on elbow plot analysis (explains 89.3% of variance)
+e) UMAP computed on PCA embeddings → 33 clusters (unintegrated)
 
 # Batch Correction (Harmony):
-Batch variable: patient.id (23 patients — true source of technical variation)
-Harmony corrected UMAP → 30 clusters (integrated)
-Same-batch fraction reduced from 0.470 → 0.247 (47.4% reduction)
-All 23 patients show improved mixing after correction
+a) Batch variable: patient.id (23 patients — true source of technical variation)
+b) Harmony corrected UMAP → 30 clusters (integrated)
+c) Same-batch fraction reduced from 0.470 → 0.247 (47.4% reduction)
+d) All 23 patients show improved mixing after correction
 
 # Plots Generated:
 # Quality Control (GSE181919_Quality Control.pdf)
-Pre-QC and Post-QC violin plots for nCount_RNA, nFeature_RNA, percent.mt and percent.rb — distributions shown per sample, colored by tissue type (NL/LP/CA/LN)
-Pre-QC and Post-QC density scatter plots of log1p(nCount_RNA) vs log1p(nFeature_RNA) colored by tissue type, with marginal histograms
+a) Pre-QC and Post-QC violin plots for nCount_RNA, nFeature_RNA, percent.mt and percent.rb — distributions shown per sample, colored by tissue type (NL/LP/CA/LN)
+b) Pre-QC and Post-QC density scatter plots of log1p(nCount_RNA) vs log1p(nFeature_RNA) colored by tissue type, with marginal histograms
 
 # Dimensionality Reduction (GSE181919_ElbowPlot.pdf)
-PCA elbow plot showing variance explained per PC — used to select 50 PCs (89.3% variance)
+a) PCA elbow plot showing variance explained per PC — used to select 50 PCs (89.3% variance)
 
 # Batch Correction (GSE181919_Batch Correction.pdf)
-UMAP plots before and after Harmony correction, colored by tissue type and by patient ID — visually confirms batch effect removal
-KNN batch mixing bar plot comparing same-batch fraction per patient before vs after Harmony — quantifies the 47.4% reduction in batch effect
+a) UMAP plots before and after Harmony correction, colored by tissue type and by patient ID — visually confirms batch effect removal
+b) KNN batch mixing bar plot comparing same-batch fraction per patient before vs after Harmony — quantifies the 47.4% reduction in batch effect
 
