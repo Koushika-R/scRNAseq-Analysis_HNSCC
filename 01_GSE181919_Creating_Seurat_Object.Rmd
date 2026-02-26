@@ -1,0 +1,153 @@
+---
+title: "HNSCC scRNA - Creating Seurat Object"
+author: "Koushika R"
+date: "2026-02-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC")
+```
+
+
+#Verify Working Directory & Create Folders
+```{r verify}
+# Confirm working directory
+getwd()
+list.files()
+```
+
+```{r creating_directories}
+# Create folders to store outputs, plots, and results
+dir.create("output",  showWarnings = FALSE)
+dir.create("plots",   showWarnings = FALSE)
+
+# Confirm folders created
+list.files()
+```
+
+
+#Load Libraries
+```{r libraries}
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+
+# Verify versions
+cat("Seurat version:", as.character(packageVersion("Seurat")), "\n")
+cat("dplyr version:",  as.character(packageVersion("dplyr")),  "\n")
+cat("ggplot2 version:", as.character(packageVersion("ggplot2")), "\n")
+```
+
+
+#Load Input Files
+```{r load protein coding}
+# Load protein coding genes list
+# Source: GENCODE v38 / GRCh38 — 19,268 protein coding genes
+protein_coding <- read.table("Protein_coding_genes.txt",
+                              header = FALSE,
+                              stringsAsFactors = FALSE)$V1
+
+# Remove "symbol" header word
+protein_coding <- protein_coding[protein_coding != "symbol"]
+cat("Total protein coding genes loaded:", length(protein_coding), "\n")
+```
+
+```{r load metadata}
+# Load cell-level metadata (54,239 cells x 8 columns)
+# Columns: patient.id, sample.id, Gender, Age, tissue.type, subsite, hpv, cell.type
+metadata <- read.table("raw files/GSE181919_Barcode_metadata.txt",
+                        header = TRUE,
+                        sep = "\t",
+                        stringsAsFactors = FALSE,
+                        row.names = 1)
+
+cat("Metadata shape:", nrow(metadata), "rows x", ncol(metadata), "columns\n")
+```
+
+```{r load_counts}
+# Load full UMI count matrix (20,000 genes x 54,239 cells)
+# Takes approx. 10 to 15 mins
+cat("Loading count matrix... please wait\n")
+
+counts <- read.table("raw files/GSE181919_UMI_counts.txt",
+                      header = TRUE,
+                      sep = "\t",
+                      row.names = 1,
+                      check.names = FALSE)
+
+cat("Count matrix shape:", nrow(counts), "genes x", ncol(counts), "cells\n")
+```
+
+
+# Fix Barcodes & Verify Cell Match
+```{r fix_barcodes}
+# Count matrix uses "." separator → metadata uses "-"
+# Example: AAACGGGCATGACGGA.1 → AAACGGGCATGACGGA-1
+colnames(counts) <- gsub("\\.", "-", colnames(counts))
+
+# Verify all cells match between count matrix and metadata
+common_cells <- intersect(colnames(counts), rownames(metadata))
+cat("Total matching cells:", length(common_cells), "\n")
+cat("Cells only in count matrix:", length(setdiff(colnames(counts), rownames(metadata))), "\n")
+cat("Cells only in metadata:", length(setdiff(rownames(metadata), colnames(counts))), "\n")
+```
+
+
+# Filter to Protein Coding Genes & Create Seurat Object
+```{r create_seurat}
+# Filter count matrix to protein coding genes only
+protein_coding_in_data <- intersect(rownames(counts), protein_coding)
+cat("Protein coding genes found in count matrix:", length(protein_coding_in_data), "\n")
+cat("Non-coding genes removed:", nrow(counts) - length(protein_coding_in_data), "\n")
+
+counts_filtered <- counts[protein_coding_in_data, ]
+cat("Filtered count matrix:", nrow(counts_filtered), "genes x", ncol(counts_filtered), "cells\n")
+
+# Create Seurat object
+# min.cells = 3    → keep genes detected in at least 3 cells
+# min.features = 200 → keep cells with at least 200 genes detected
+seurat_obj <- CreateSeuratObject(
+  counts = counts_filtered,
+  project = "GSE181919_HNSCC",
+  min.cells = 3,
+  min.features = 200
+)
+
+cat("\nSeurat object created!\n")
+print(seurat_obj)
+```
+
+
+#Add Metadata to Seurat Object
+```{r add_metadata}
+# Add all 8 metadata columns to Seurat object
+seurat_obj <- AddMetaData(seurat_obj, metadata = metadata)
+
+# Verify
+cat("Metadata columns in Seurat object:\n")
+print(colnames(seurat_obj@meta.data))
+
+# Confirm key columns for our analyses
+cat("\nTissue type distribution (Question 1 — TME across stages):\n")
+print(table(seurat_obj$tissue.type))
+
+cat("\nHPV status distribution (Question 2 — T cell exhaustion):\n")
+print(table(seurat_obj$hpv))
+
+cat("\nCell type distribution:\n")
+print(table(seurat_obj$cell.type))
+```
+
+
+#Save Raw Seurat Object
+```{r save_seurat}
+saveRDS(seurat_obj, "output/01_GSE181919_seurat_raw.rds")
+cat("Seurat object saved to: output/01_GSE181919_seurat_raw.rds\n")
+
+cat("\n=== Final Seurat Object Summary ===\n")
+cat("Total cells:", ncol(seurat_obj), "\n")
+cat("Total genes:", nrow(seurat_obj), "\n")
+cat("Metadata columns:", ncol(seurat_obj@meta.data), "\n")
+```
