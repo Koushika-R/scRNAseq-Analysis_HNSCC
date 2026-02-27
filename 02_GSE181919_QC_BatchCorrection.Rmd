@@ -7,14 +7,14 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_knit$set(root.dir = "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC")
+knitr::opts_knit$set(root.dir = "~/GSE181919_HNSCC")
 ```
 
 
 #Define Directories & Study ID
 ```{r define_directories}
-outputDir <- "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC/output"
-plotDir   <- "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC/plots"
+outputDir <- "~/GSE181919_HNSCC/output"
+plotDir   <- "~/GSE181919_HNSCC/plots"
 study_id  <- "GSE181919"
 ```
 
@@ -42,7 +42,7 @@ cat("Seurat version:", as.character(packageVersion("Seurat")), "\n")
 
 #Load Raw Seurat Object
 ```{r load_seurat}
-seurat_combined <- readRDS(file = paste0("C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC/output/01_GSE181919_seurat_raw.rds"))
+seurat_combined <- readRDS(file = paste0("~/GSE181919_HNSCC/output/01_GSE181919_seurat_raw.rds"))
 
 seurat_combined <- UpdateSeuratObject(seurat_combined)
 # UpdateSeuratObject() converts the object to the current Seurat version format.
@@ -679,9 +679,10 @@ ggsave(
 cat("Saved:", paste0(study_id, "_batch_correction_barplot.png\n"))
 ```
 
+
 ```{r annotation_umaps}
 # Load Harmony object
-harmony_processed <- readRDS(paste0("C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC/output04_GSE181919_harmony_corrected.rds"))
+harmony_processed <- readRDS(paste0("~04_GSE181919_harmony_corrected.rds"))
 
 # Plot 1: Harmony clusters
 p1 <- DimPlot(harmony_processed,
@@ -743,4 +744,5 @@ p4
 cat("All UMAP plots saved!\n")
 
 ```
+
 
