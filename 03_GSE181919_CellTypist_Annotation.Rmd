@@ -1,0 +1,323 @@
+---
+title: "GSE181919 _ Cell typist Annotation"
+author: "Koushika R"
+date: "2026-02-27"
+output: html_document
+---
+
+```{r install_celltypist_r}
+# Install R wrapper for CellTypist (run once)
+if (!requireNamespace("reticulate", quietly = TRUE)) install.packages("reticulate")
+library(reticulate)
+
+# Point reticulate to your scrna conda environment
+use_condaenv("scrna", required = TRUE)
+
+# Verify CellTypist is accessible
+celltypist <- import("celltypist")
+print("CellTypist loaded successfully ✅")
+```
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_knit$set(root.dir = "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC")
+```
+
+# STEP 1: Define Paths
+```{r paths}
+# All paths are defined once here and reused throughout the script.
+# model_dir points to the manually downloaded CellTypist .pkl files.
+
+base_dir   <- "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC"
+output_dir <- file.path(base_dir, "output")
+plot_dir   <- file.path(base_dir, "plots", "celltypist_plots")
+result_dir <- file.path(base_dir, "results")
+model_dir  <- file.path(base_dir, "models")
+study_id   <- "GSE181919"
+
+dir.create(plot_dir,   showWarnings = FALSE, recursive = TRUE)
+dir.create(result_dir, showWarnings = FALSE, recursive = TRUE)
+
+cat("Paths defined ✅\n")
+cat("Plot dir:  ", plot_dir,   "\n")
+cat("Result dir:", result_dir, "\n")
+cat("Model dir: ", model_dir,  "\n")
+```
+
+# STEP 2: Load Libraries
+```{r libraries}
+# reticulate: R interface to Python — used to call CellTypist from R
+# reshape2:   Used for confusion matrix reshaping (dcast/melt)
+library(Seurat)
+library(ggplot2)
+library(reshape2)
+library(reticulate)
+
+cat("Libraries loaded ✅\n")
+```
+
+# STEP 3: Load Harmony-Corrected Seurat Object
+```{r load_seurat}
+# Input:  04_GSE181919_harmony_corrected.rds (51,849 cells × 15,086 genes)
+# This object contains:
+#   - Log-normalized counts in RNA@data layer
+#   - Harmony UMAP coordinates in reductions$umap
+#   - All metadata: tissue.type, cell.type, patient.id, hpv, harmony_clusters
+# UpdateSeuratObject() ensures Seurat v5 compatibility
+# =============================================================================
+
+cat("Loading Seurat object...\n")
+
+harmony_processed <- readRDS(
+    file.path(output_dir, "04_GSE181919_harmony_corrected.rds")
+)
+harmony_processed <- UpdateSeuratObject(harmony_processed)
+
+cat("Loaded:", ncol(harmony_processed), "cells ×",
+              nrow(harmony_processed), "genes\n")
+cat("Metadata columns:", paste(colnames(harmony_processed@meta.data),
+                                collapse = ", "), "\n")
+cat("Reductions:", paste(names(harmony_processed@reductions),
+                          collapse = ", "), "\n")
+```
+
+
+# STEP 4: Setup Python Environment
+```{r setup_python}
+# We import three Python libraries:
+#   - celltypist: annotation tool
+#   - scipy.sparse: for sparse matrix conversion (memory efficient)
+#   - anndata: AnnData format required by CellTypist
+# =============================================================================
+
+use_condaenv("scrna", required = TRUE)
+
+celltypist <- import("celltypist")
+scipy      <- import("scipy.sparse")
+ad         <- import("anndata")
+
+cat("Python environment: scrna ✅\n")
+cat("CellTypist imported ✅\n")
+
+# Verify model file exists
+model_path <- file.path(model_dir, "Immune_All_High.pkl")
+cat("\nModel path:", model_path, "\n")
+cat("Model file exists:", file.exists(model_path), "\n")
+
+# Check cell types in model
+model <- celltypist$models$Model$load(model_path)
+cat("\nCell types in Immune_All_High model (", length(model$cell_types), "):\n")
+print(model$cell_types)
+```
+
+
+# STEP 5: Create AnnData Object for CellTypist
+```{r create_anndata}
+# CellTypist requires an AnnData object with:
+#   - X: log-normalized counts matrix (cells × genes)
+#   - var_names: gene names
+#   - obs_names: cell barcodes
+#
+# Key memory considerations:
+#   - GetAssayData() extracts sparse matrix from Seurat
+#   - t() + as.matrix() creates a temporary dense matrix — unavoidable
+#   - scipy$csr_matrix() immediately converts back to sparse
+#   - rm(counts_matrix) + gc() frees the dense matrix right after conversion
+#
+# Why sparse? 51,849 × 15,086 dense matrix = ~6 GB
+#             51,849 × 15,086 sparse matrix = ~200 MB
+# =============================================================================
+
+cat("Extracting log-normalized counts from Seurat...\n")
+
+counts_matrix <- t(as.matrix(
+    GetAssayData(harmony_processed, assay = "RNA", layer = "data")
+))
+cat("Matrix shape:", nrow(counts_matrix), "cells ×",
+                     ncol(counts_matrix), "genes\n")
+
+# Create AnnData with sparse matrix
+cat("Creating AnnData...\n")
+adata           <- ad$AnnData(X = scipy$csr_matrix(counts_matrix))
+adata$var_names <- colnames(counts_matrix)
+adata$obs_names <- rownames(counts_matrix)
+cat("AnnData created ✅\n")
+cat(py_str(adata), "\n")
+
+# Free dense matrix immediately to recover RAM
+rm(counts_matrix)
+gc()
+cat("Dense matrix freed from memory ✅\n")
+```
+
+
+
+# STEP 6: Run CellTypist Annotation
+```{r run_celltypist}
+#   - Trained on immune + stromal populations from 20 human tissues
+#   - Covers 8/10 GSE181919 cell types directly:
+#     T cells, B cells, Plasma cells, Macrophages, Fibroblasts,
+#     Endothelial cells, Epithelial cells, DC, Mast cells
+#   - Malignant cells → predicted as Epithelial cells (epithelial origin)
+#   - Myocytes (282 cells, 0.5%) → nearest available label
+#
+# majority_voting = FALSE: per-cell prediction
+#   - Does not require sc.pp.neighbors() which crashes on 16 GB RAM
+#   - Sufficient for validation since author labels are available
+# =============================================================================
+
+cat("Running CellTypist annotation...\n")
+cat("Model:  Immune_All_High.pkl\n")
+cat("Mode:   per-cell prediction (majority_voting = FALSE)\n\n")
+
+ct_pred <- celltypist$annotate(
+    adata,
+    model           = model_path,
+    majority_voting = FALSE
+)
+
+# Extract and add labels to Seurat metadata
+celltypist_labels <- as.character(
+    ct_pred$predicted_labels$predicted_labels
+)
+
+harmony_processed <- AddMetaData(
+    harmony_processed,
+    metadata = celltypist_labels,
+    col.name = "celltypist_label"
+)
+
+cat("Annotation complete ✅\n\n")
+cat("=== Cell Type Distribution ===\n")
+print(table(harmony_processed$celltypist_label))
+```
+
+
+
+# STEP 7: UMAP — CellTypist Predicted Labels
+```{r umap_celltypist}
+# Visualize CellTypist annotation on the Harmony-corrected UMAP.
+# Compare visually with the author cell type plot from Script 02.
+# =============================================================================
+
+p1 <- DimPlot(harmony_processed,
+              reduction  = "umap",
+              group.by   = "celltypist_label",
+              pt.size    = 0.1,
+              label      = TRUE,
+              label.size = 3) +
+    labs(title = paste0(study_id, " | CellTypist Predicted Labels")) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+ggsave(file.path(plot_dir, paste0(study_id, "_UMAP_CellTypist_labels.png")),
+       p1, width = 12, height = 8, dpi = 150, bg = "white")
+p1
+```
+
+
+# STEP 8: UMAP — CellTypist Labels Split by Tissue Type
+```{r umap_celltypist_split}
+# Shows how cell type composition is distributed across disease stages:
+# NL (normal) → LP (leukoplakia) → CA (primary cancer) → LN (lymph node)
+# Equivalent to the Condition split used in GSE279086.
+
+p2 <- DimPlot(harmony_processed,
+              reduction       = "umap",
+              group.by        = "celltypist_label",
+              split.by        = "tissue.type",
+              pt.size         = 0.1) +
+    labs(title = paste0(study_id, " | CellTypist Labels by Tissue Type")) +
+    theme(plot.title      = element_text(hjust = 0.5, face = "bold"),
+          legend.position = "bottom")
+
+ggsave(file.path(plot_dir, paste0(study_id, "_UMAP_CellTypist_by_tissue.png")),
+       p2, width = 20, height = 6, dpi = 150, bg = "white")
+p2
+```
+
+
+
+# STEP 9: Validate CellTypist vs Author Annotations
+```{r confusion_matrix}
+# GSE181919 has author-provided cell.type labels — a unique advantage.
+# We build a row-normalized confusion matrix showing what % of each
+# CellTypist label maps to each author cell type.
+#
+# Ideal result: diagonal dominance (CellTypist agrees with author labels)
+# Expected mismatches:
+#   - Malignant cells → predicted as Epithelial cells
+#   - Myocytes → predicted as nearest available label
+# =============================================================================
+
+# Build confusion matrix
+conf_df <- as.data.frame(
+    table(
+        CellTypist = harmony_processed$celltypist_label,
+        Author     = harmony_processed$cell.type
+    )
+)
+
+# Row-normalize to percentages
+conf_matrix    <- dcast(conf_df, CellTypist ~ Author, value.var = "Freq")
+conf_mat_pct   <- conf_matrix
+conf_mat_pct[, -1] <- round(
+    conf_mat_pct[, -1] / rowSums(conf_mat_pct[, -1]) * 100, 1
+)
+
+# Save
+write.csv(conf_mat_pct,
+          file.path(result_dir, paste0(study_id,
+                    "_CellTypist_vs_Author_confusion.csv")),
+          row.names = FALSE)
+cat("Confusion matrix saved ✅\n")
+
+# Plot heatmap
+conf_melt <- melt(conf_mat_pct,
+                  id.vars       = "CellTypist",
+                  variable.name = "Author",
+                  value.name    = "Percent")
+
+p3 <- ggplot(conf_melt, aes(x = Author, y = CellTypist, fill = Percent)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = paste0(Percent, "%")), size = 3) +
+    scale_fill_gradient(low = "white", high = "#2166AC") +
+    labs(title = paste0(study_id,
+                        " | CellTypist vs Author Annotation (%)"),
+         x     = "Author Cell Type",
+         y     = "CellTypist Label") +
+    theme_minimal(base_size = 12) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          plot.title  = element_text(hjust = 0.5, face = "bold"))
+
+ggsave(file.path(plot_dir, paste0(study_id,
+                 "_CellTypist_vs_Author_heatmap.png")),
+       p3, width = 12, height = 10, dpi = 150, bg = "white")
+p3
+```
+
+
+# STEP 10: Save Results
+```{r save_results}
+# Save labels as CSV
+write.csv(
+    data.frame(
+        cell_barcode     = colnames(harmony_processed),
+        celltypist_label = harmony_processed$celltypist_label
+    ),
+    file.path(result_dir, paste0(study_id, "_celltypist_labels.csv")),
+    row.names = FALSE
+)
+cat("Labels CSV saved ✅\n")
+
+# Save updated Seurat object
+saveRDS(harmony_processed,
+        file.path(output_dir, "05_GSE181919_celltypist_annotated.rds"),
+        version = 2)
+cat("Seurat object saved: 05_GSE181919_celltypist_annotated.rds ✅\n")
+
+cat("\n=== Annotation Summary ===\n")
+cat("Total cells annotated:  ", ncol(harmony_processed), "\n")
+cat("CellTypist cell types:  ", 
+    length(unique(harmony_processed$celltypist_label)), "\n")
+cat("Author cell types:      ", 
+    length(unique(harmony_processed$cell.type)), "\n")
+```
