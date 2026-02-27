@@ -7,7 +7,7 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_knit$set(root.dir = "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC")
+knitr::opts_knit$set(root.dir = "~/GSE181919_HNSCC")
 ```
 
 
@@ -105,6 +105,7 @@ cat("Non-coding genes removed:", nrow(counts) - length(protein_coding_in_data), 
 counts_filtered <- counts[protein_coding_in_data, ]
 cat("Filtered count matrix:", nrow(counts_filtered), "genes x", ncol(counts_filtered), "cells\n")
 
+
 # Create Seurat object
 # min.cells = 3    → keep genes detected in at least 3 cells
 # min.features = 200 → keep cells with at least 200 genes detected
@@ -151,3 +152,4 @@ cat("Total cells:", ncol(seurat_obj), "\n")
 cat("Total genes:", nrow(seurat_obj), "\n")
 cat("Metadata columns:", ncol(seurat_obj@meta.data), "\n")
 ```
+
