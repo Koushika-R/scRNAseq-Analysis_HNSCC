@@ -72,3 +72,19 @@ a) PCA elbow plot showing variance explained per PC — used to select 50 PCs (8
 a) UMAP plots before and after Harmony correction, colored by tissue type and by patient ID — visually confirms batch effect removal
 b) KNN batch mixing bar plot comparing same-batch fraction per patient before vs after Harmony — quantifies the 47.4% reduction in batch effect
 
+
+# Step 4 — CellTypist Cell Type Annotation (03_GSE181919_CellTypist_Annotation.Rmd)
+# Model Selection:
+CellTypist was run using the Immune_All_High.pkl model — trained on immune and stromal populations from 20 human tissues. This model was selected over Human_Colorectal_Cancer.pkl because it directly covers 8/10 GSE181919 cell types. The two cell types not in the model were handled as follows: malignant cells were predicted as Epithelial cells (biologically correct — HNSCC malignant cells are of epithelial origin), and myocytes (only 282 cells, 0.5% of dataset) were assigned to the nearest available label.
+
+# Annotation Approach:
+a) CellTypist was run via the reticulate R package, calling Python directly from R to avoid memory issues encountered in standalone Python (51,849 cells × 15,086 genes exceeded available RAM during the scaling step). 
+b) Per-cell prediction was used (majority_voting = FALSE) as the neighbor graph computation required for majority voting also crashed on 16 GB RAM.
+
+# Validation Against Author Labels:
+CellTypist annotation using the Immune_All_High model showed strong agreement with the author-provided cell type labels across all major populations. The highest agreement was observed for Mast cells (98.1%), plasmacytoid Dendritic cells (97.9%), Plasma cells (95.7%), Fibroblasts (94.6%), and T cells (94.3%), all exceeding 94% concordance. Macrophages (92.4%), B cells (90.3%), and Endothelial cells (89.6%) also showed excellent agreement. Notably, Malignant cells were predicted as Epithelial cells with 83.3% agreement — this is biologically expected rather than a misclassification, as HNSCC malignant cells are of epithelial origin and the model does not contain a dedicated malignant cell category. Overall, CellTypist correctly identified 8 out of 10 cell types with greater than 89% accuracy, confirming the reliability of the automated annotation for this dataset.
+
+# Plots (GSE181919_UMAP_CellTypist_labels_and_Author_vs_Celltypist_Annotation.pdf)
+a) CellTypist predicted labels on Harmony UMAP — confirms clean cell type separation matching author annotations
+b) CellTypist labels split by tissue type (NL/LP/CA/LN) — shows cell type composition changes across disease progression
+c) CellTypist vs Author annotation confusion matrix heatmap — quantifies agreement between predicted and published labels
