@@ -42,7 +42,7 @@ cat("Seurat version:", as.character(packageVersion("Seurat")), "\n")
 
 #Load Raw Seurat Object
 ```{r load_seurat}
-seurat_combined <- readRDS(file = paste0(outputDir, "01_GSE181919_seurat_raw.rds"))
+seurat_combined <- readRDS(file = paste0("C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC/output/01_GSE181919_seurat_raw.rds"))
 
 seurat_combined <- UpdateSeuratObject(seurat_combined)
 # UpdateSeuratObject() converts the object to the current Seurat version format.
@@ -475,6 +475,7 @@ cat("Saved .h5seurat and .h5ad files.\n")
 # so patient is the true batch source, not the individual sample.
 
 ```{r harmony_integration}
+set.seed(8)
 harmony_processed <- RunHarmony(seurat_processed,
                                  group.by.vars    = "patient.id",
                                  plot_convergence = TRUE)
@@ -677,3 +678,69 @@ ggsave(
 )
 cat("Saved:", paste0(study_id, "_batch_correction_barplot.png\n"))
 ```
+
+```{r annotation_umaps}
+# Load Harmony object
+harmony_processed <- readRDS(paste0("C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC/output04_GSE181919_harmony_corrected.rds"))
+
+# Plot 1: Harmony clusters
+p1 <- DimPlot(harmony_processed,
+              reduction  = "umap",
+              group.by   = "harmony_clusters",
+              label      = TRUE,
+              label.size = 3,
+              pt.size    = 0.1) +
+  labs(title = paste0(study_id, " | Harmony Clusters")) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold")) +
+  NoLegend()
+
+ggsave(file.path(plotDir, paste0(study_id, "_UMAP_harmony_clusters.png")),
+       p1, width = 8, height = 7, dpi = 150, bg = "white")
+p1
+
+# Plot 2: Author cell types
+p2 <- DimPlot(harmony_processed,
+              reduction = "umap",
+              group.by  = "cell.type",
+              pt.size   = 0.1) +
+  labs(title = paste0(study_id, " | Author Cell Types")) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+ggsave(file.path(plotDir, paste0(study_id, "_UMAP_author_celltypes.png")),
+       p2, width = 10, height = 7, dpi = 150, bg = "white")
+p2
+
+# Plot 3: Tissue type
+p3 <- DimPlot(harmony_processed,
+              reduction = "umap",
+              group.by  = "tissue.type",
+              pt.size   = 0.1) +
+  scale_color_manual(values = c(
+    "NL" = "#4DAF4A",
+    "LP" = "#FF7F00",
+    "CA" = "#E41A1C",
+    "LN" = "#984EA3"
+  )) +
+  labs(title = paste0(study_id, " | Tissue Type")) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+ggsave(file.path(plotDir, paste0(study_id, "_UMAP_tissue_type.png")),
+       p3, width = 9, height = 7, dpi = 150, bg = "white")
+p3
+
+# Plot 4: HPV status
+p4 <- DimPlot(harmony_processed,
+              reduction = "umap",
+              group.by  = "hpv",
+              pt.size   = 0.1) +
+  labs(title = paste0(study_id, " | HPV Status")) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+ggsave(file.path(plotDir, paste0(study_id, "_UMAP_hpv_status.png")),
+       p4, width = 8, height = 7, dpi = 150, bg = "white")
+p4
+
+cat("All UMAP plots saved!\n")
+
+```
+
