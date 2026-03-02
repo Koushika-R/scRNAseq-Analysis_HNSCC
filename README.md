@@ -88,3 +88,36 @@ CellTypist annotation using the Immune_All_High model showed strong agreement wi
 a) CellTypist predicted labels on Harmony UMAP — confirms clean cell type separation matching author annotations
 b) CellTypist labels split by tissue type (NL/LP/CA/LN) — shows cell type composition changes across disease progression
 c) CellTypist vs Author annotation confusion matrix heatmap — quantifies agreement between predicted and published labels
+
+
+# Step 5 — Tumor Microenvironment Analysis (04_GSE181919_TME_Analysis.Rmd)
+# Cell Type Proportions Across Disease Progression (NL → LP → CA → LN):
+a) The dominant transition in HNSCC progression is a stromal-to-immune shift. 
+b) Fibroblasts decrease from 52% in NL to 2% in LN, while T cells increase from 25% in NL to 57% in LN. 
+c) B/Plasma cells show a steady increase across all stages (5% → 15% → 18% → 26%), reflecting progressive humoral immune activation. 
+d) Macrophages peak at CA (15%), consistent with tumor-associated macrophage infiltration. Malignant cells are entirely absent in NL and LP and appear exclusively in CA (17%) and minimally in LN (3%).
+
+
+# TME Compartment Ratios:
+Stage → Immune | Stromal | Malignant
+a) NL → 33%    |  67%    |  0%
+b) LP → 45%    |  55%    |  0%
+c) CA → 74%    |  10%    |  16%
+d) LN → 95%    |   2%    |  3%
+
+The immune compartment expands progressively from 33% in normal tissue to 95% in lymph node metastasis. The stromal compartment collapses from 67% to 2% as cancer-associated fibroblasts are replaced by immune infiltrates. Malignant cells peak at CA (16%) and are nearly absent in LN (3%), indicating that metastatic spread involves few tumor cells relative to the immune response they trigger.
+
+
+# HPV Status Shapes the TME:
+a) HPV+ and HPV– tumors show fundamentally different TME compositions. HPV+ tumors are T cell-rich (50% vs 27% in HPV–), reflecting the strong adaptive immune response driven by viral antigens. 
+b) HPV– tumors are macrophage-rich (21% vs 5%) and fibroblast-rich (14% vs 1%), suggesting innate immune suppression and desmoplastic stroma dominate in HPV– HNSCC. 
+c) Malignant cells are more abundant in HPV+ tumors (23% vs 11%), consistent with HPV oncoprotein-driven cell proliferation. 
+
+
+# Plots Generated:
+a) Cell type proportions by tissue type — stacked and grouped bar plots
+b) Cell type proportions by HPV status — stacked and grouped bar plots (CA only)
+c) TME compartment ratios (Immune/Stromal/Malignant) — stacked and grouped bar plots
+d) CellTypist subtype proportions by tissue type — stacked bar plot with 15 subtypes
+e) Canonical marker gene dot plot — 40 genes across 10 cell types
+
