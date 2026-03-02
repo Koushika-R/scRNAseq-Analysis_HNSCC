@@ -1,0 +1,457 @@
+---
+title: "04 — GSE181919 Tumor Microenvironment Analysis"
+author: "Koushika R"
+date: "2026-03-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_knit$set(root.dir = "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC")
+```
+
+
+# STEP 1: Define Paths
+```{r paths}
+base_dir   <- "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC"
+output_dir <- file.path(base_dir, "output")
+plot_dir   <- file.path(base_dir, "plots", "TME_plots")
+result_dir <- file.path(base_dir, "results")
+study_id   <- "GSE181919"
+
+dir.create(plot_dir,   showWarnings = FALSE, recursive = TRUE)
+dir.create(result_dir, showWarnings = FALSE, recursive = TRUE)
+
+cat("Paths defined ✅\n")
+```
+
+
+# STEP 2: Load Libraries
+```{r libraries}
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(scales)
+library(RColorBrewer)
+
+cat("Libraries loaded ✅\n")
+```
+
+
+# STEP 3: Load Annotated Seurat Object
+```{r load_seurat}
+# Input: 05_GSE181919_celltypist_annotated.rds
+# Contains both:
+#   - cell.type: author-provided labels (10 broad cell types)
+#   - celltypist_label: CellTypist predicted labels (32 subtypes)
+# =============================================================================
+
+cat("Loading Seurat object...\n")
+seurat_obj <- readRDS(
+    file.path(output_dir, "05_GSE181919_celltypist_annotated.rds")
+)
+seurat_obj <- UpdateSeuratObject(seurat_obj)
+
+cat("Loaded:", ncol(seurat_obj), "cells ×", nrow(seurat_obj), "genes\n")
+cat("Tissue types:", paste(unique(seurat_obj$tissue.type), collapse = ", "), "\n")
+cat("Author cell types:", paste(unique(seurat_obj$cell.type), collapse = ", "), "\n")
+cat("CellTypist labels:", length(unique(seurat_obj$celltypist_label)), "subtypes\n")
+```
+
+
+# STEP 4: Define Color Palettes
+```{r color_palettes}
+# Consistent colors used across all plots in this script
+
+# Tissue type colors
+tissue_colors <- c(
+    "NL" = "#4DAF4A",
+    "LP" = "#FF7F00",
+    "CA" = "#E41A1C",
+    "LN" = "#984EA3"
+)
+
+# Author cell type colors (10 types)
+celltype_colors <- c(
+    "T.cells"            = "#E41A1C",
+    "Fibroblasts"        = "#377EB8",
+    "B_Plasma.cells"     = "#FF7F00",
+    "Macrophages"        = "#984EA3",
+    "Malignant.cells"    = "#A65628",
+    "Endothelial.cells"  = "#F781BF",
+    "Dendritic.cells"    = "#999999",
+    "Epithelial.cells"   = "#4DAF4A",
+    "Myocytes"           = "#FFFF33",
+    "Mast.cells"         = "#00CED1"
+)
+
+# HPV status colors
+hpv_colors <- c(
+    "HPV+" = "#00BFC4",
+    "HPV-" = "#F8766D"
+)
+
+# TME compartment colors
+compartment_colors <- c(
+    "Immune"   = "#E41A1C",
+    "Stromal"  = "#377EB8",
+    "Malignant"= "#A65628"
+)
+
+cat("Color palettes defined ✅\n")
+```
+
+
+# STEP 5: Assign TME Compartments
+```{r tme_compartments}
+# Cells are grouped into 3 biological compartments for ratio analysis:
+#   Immune:    T cells, B/Plasma cells, Macrophages, Dendritic cells, Mast cells
+#   Stromal:   Fibroblasts, Endothelial cells, Myocytes, Epithelial cells
+#   Malignant: Malignant cells
+# =============================================================================
+
+seurat_obj$tme_compartment <- case_when(
+    seurat_obj$cell.type %in% c("T.cells", "B_Plasma.cells", "Macrophages",
+                                 "Dendritic.cells", "Mast.cells") ~ "Immune",
+    seurat_obj$cell.type %in% c("Fibroblasts", "Endothelial.cells",
+                                 "Myocytes", "Epithelial.cells")  ~ "Stromal",
+    seurat_obj$cell.type == "Malignant.cells"                     ~ "Malignant",
+    TRUE ~ "Other"
+)
+
+cat("TME compartments assigned:\n")
+print(table(seurat_obj$tme_compartment))
+```
+
+
+# STEP 6: Cell Type Proportions by Tissue Type — Stacked Bar Plot
+```{r proportions_by_tissue_stacked}
+# Shows how the TME composition changes across NL → LP → CA → LN
+# Using author cell type labels (10 broad cell types)
+# Each bar = one tissue type, segments = cell type proportions
+# =============================================================================
+
+# Calculate proportions
+prop_tissue <- seurat_obj@meta.data %>%
+    group_by(tissue.type, cell.type) %>%
+    summarise(count = n(), .groups = "drop") %>%
+    group_by(tissue.type) %>%
+    mutate(proportion = count / sum(count) * 100) %>%
+    ungroup()
+
+# Stacked bar plot
+p1 <- ggplot(prop_tissue,
+             aes(x    = factor(tissue.type, levels = c("NL","LP","CA","LN")),
+                 y    = proportion,
+                 fill = cell.type)) +
+    geom_bar(stat = "identity", width = 0.7) +
+    scale_fill_manual(values = celltype_colors) +
+    scale_y_continuous(labels = percent_format(scale = 1)) +
+    labs(title = paste0(study_id, " | Cell Type Proportions by Tissue Type"),
+         x     = "Tissue Type",
+         y     = "Proportion (%)",
+         fill  = "Cell Type") +
+    theme_minimal(base_size = 14) +
+    theme(plot.title  = element_text(hjust = 0.5, face = "bold"),
+          legend.position = "right")
+
+ggsave(file.path(plot_dir, paste0(study_id, "_TME_proportions_stacked.png")),
+       p1, width = 10, height = 7, dpi = 300, bg = "white")
+p1
+```
+
+
+# STEP 7: Cell Type Proportions by Tissue Type — Grouped Bar Plot
+```{r proportions_by_tissue_grouped}
+# Same data as Step 6 but as grouped bars — easier to compare
+# individual cell types across tissue types
+
+p2 <- ggplot(prop_tissue,
+             aes(x    = cell.type,
+                 y    = proportion,
+                 fill = factor(tissue.type, levels = c("NL","LP","CA","LN")))) +
+    geom_bar(stat     = "identity",
+             position = position_dodge(width = 0.8),
+             width    = 0.7) +
+    scale_fill_manual(values = tissue_colors) +
+    scale_y_continuous(labels = percent_format(scale = 1)) +
+    labs(title = paste0(study_id, " | Cell Type Proportions Across Disease Progression"),
+         x     = "Cell Type",
+         y     = "Proportion (%)",
+         fill  = "Tissue Type") +
+    theme_minimal(base_size = 14) +
+    theme(plot.title   = element_text(hjust = 0.5, face = "bold"),
+          axis.text.x  = element_text(angle = 45, hjust = 1))
+
+ggsave(file.path(plot_dir, paste0(study_id, "_TME_proportions_grouped.png")),
+       p2, width = 14, height = 7, dpi = 300, bg = "white")
+p2
+```
+
+
+# STEP 8: Cell Type Proportions by HPV Status — Stacked Bar Plot
+```{r proportions_by_hpv_stacked}
+# Compares TME composition between HPV+ and HPV– tumors
+# Key biological question: Does HPV status shape the immune microenvironment?
+# Only CA (primary cancer) cells have meaningful HPV annotation
+
+# Filter to CA only — HPV status is meaningful in primary cancer
+ca_cells <- seurat_obj@meta.data %>%
+    filter(tissue.type == "CA")
+
+prop_hpv <- ca_cells %>%
+    group_by(hpv, cell.type) %>%
+    summarise(count = n(), .groups = "drop") %>%
+    group_by(hpv) %>%
+    mutate(proportion = count / sum(count) * 100) %>%
+    ungroup()
+
+# Stacked bar plot
+p3 <- ggplot(prop_hpv,
+             aes(x = hpv, y = proportion, fill = cell.type)) +
+    geom_bar(stat = "identity", width = 0.6) +
+    scale_fill_manual(values = celltype_colors) +
+    scale_y_continuous(labels = percent_format(scale = 1)) +
+    labs(title = paste0(study_id, " | TME Composition by HPV Status (CA only)"),
+         x     = "HPV Status",
+         y     = "Proportion (%)",
+         fill  = "Cell Type") +
+    theme_minimal(base_size = 14) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+ggsave(file.path(plot_dir, paste0(study_id, "_TME_HPV_stacked.png")),
+       p3, width = 8, height = 7, dpi = 300, bg = "white")
+p3
+```
+
+
+# STEP 9: Cell Type Proportions by HPV Status — Grouped Bar Plot
+```{r proportions_by_hpv_grouped}
+p4 <- ggplot(prop_hpv,
+             aes(x = cell.type, y = proportion, fill = hpv)) +
+    geom_bar(stat     = "identity",
+             position = position_dodge(width = 0.8),
+             width    = 0.7) +
+    scale_fill_manual(values = hpv_colors) +
+    scale_y_continuous(labels = percent_format(scale = 1)) +
+    labs(title = paste0(study_id, " | Cell Type Proportions: HPV+ vs HPV– (CA only)"),
+         x     = "Cell Type",
+         y     = "Proportion (%)",
+         fill  = "HPV Status") +
+    theme_minimal(base_size = 14) +
+    theme(plot.title  = element_text(hjust = 0.5, face = "bold"),
+          axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave(file.path(plot_dir, paste0(study_id, "_TME_HPV_grouped.png")),
+       p4, width = 12, height = 7, dpi = 300, bg = "white")
+p4
+```
+
+
+# STEP 10: Immune vs Stromal vs Malignant Ratio — Stacked Bar Plot
+```{r tme_compartment_ratio_stacked}
+# Shows the balance between the three major TME compartments across disease progression — key indicator of tumor evolution
+# Expected pattern:
+#   NL: Stromal dominant (normal tissue architecture)
+#   LP: Immune begins to increase (inflammatory response)
+#   CA: Malignant + Immune both increase (active tumor)
+#   LN: Immune dominant (lymph node = immune organ)
+# =============================================================================
+
+prop_compartment <- seurat_obj@meta.data %>%
+    filter(tme_compartment != "Other") %>%
+    group_by(tissue.type, tme_compartment) %>%
+    summarise(count = n(), .groups = "drop") %>%
+    group_by(tissue.type) %>%
+    mutate(proportion = count / sum(count) * 100) %>%
+    ungroup()
+
+# Stacked bar plot
+p5 <- ggplot(prop_compartment,
+             aes(x    = factor(tissue.type, levels = c("NL","LP","CA","LN")),
+                 y    = proportion,
+                 fill = tme_compartment)) +
+    geom_bar(stat = "identity", width = 0.7) +
+    scale_fill_manual(values = compartment_colors) +
+    scale_y_continuous(labels = percent_format(scale = 1)) +
+    labs(title = paste0(study_id, " | Immune vs Stromal vs Malignant Ratio"),
+         x     = "Tissue Type",
+         y     = "Proportion (%)",
+         fill  = "TME Compartment") +
+    theme_minimal(base_size = 14) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+ggsave(file.path(plot_dir, paste0(study_id, "_TME_compartment_stacked.png")),
+       p5, width = 8, height = 7, dpi = 300, bg = "white")
+p5
+```
+
+
+# STEP 11: Immune vs Stromal vs Malignant Ratio — Grouped Bar Plot
+```{r tme_compartment_ratio_grouped}
+p6 <- ggplot(prop_compartment,
+             aes(x    = factor(tissue.type, levels = c("NL","LP","CA","LN")),
+                 y    = proportion,
+                 fill = tme_compartment)) +
+    geom_bar(stat     = "identity",
+             position = position_dodge(width = 0.8),
+             width    = 0.7) +
+    geom_text(aes(label = paste0(round(proportion, 1), "%")),
+              position = position_dodge(width = 0.8),
+              vjust    = -0.5,
+              size     = 3.5) +
+    scale_fill_manual(values = compartment_colors) +
+    scale_y_continuous(labels = percent_format(scale = 1),
+                       expand = expansion(mult = c(0, 0.1))) +
+    labs(title = paste0(study_id, " | TME Compartment Ratios Across Disease Progression"),
+         x     = "Tissue Type",
+         y     = "Proportion (%)",
+         fill  = "TME Compartment") +
+    theme_minimal(base_size = 14) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+ggsave(file.path(plot_dir, paste0(study_id, "_TME_compartment_grouped.png")),
+       p6, width = 10, height = 7, dpi = 300, bg = "white")
+p6
+```
+
+
+# STEP 12: CellTypist Subtype Proportions by Tissue Type
+```{r celltypist_subtype_proportions}
+# Uses CellTypist labels (32 subtypes) for finer resolution
+# Focuses on immune subtypes — T cell, B cell, myeloid subclusters
+# Excludes rare model artifacts (HSC/MPP, Erythroid, thymocytes etc.)
+
+# Define custom palette with enough colors for all 15 subtypes
+ct_subtype_colors <- c(
+    "T cells"          = "#E41A1C",
+    "B cells"          = "#FF7F00",
+    "Plasma cells"     = "#FFFF33",
+    "Macrophages"      = "#984EA3",
+    "Fibroblasts"      = "#377EB8",
+    "Endothelial cells"= "#F781BF",
+    "Epithelial cells" = "#4DAF4A",
+    "Mast cells"       = "#00CED1",
+    "DC"               = "#A65628",
+    "pDC"              = "#999999",
+    "Monocytes"        = "#66C2A5",
+    "Mono-mac"         = "#FC8D62",
+    "ILC"              = "#8DA0CB",
+    "Cycling cells"    = "#E78AC3",
+    "MNP"              = "#A6D854"
+)
+
+prop_ct <- seurat_obj@meta.data %>%
+    filter(celltypist_label %in% names(ct_subtype_colors)) %>%
+    group_by(tissue.type, celltypist_label) %>%
+    summarise(count = n(), .groups = "drop") %>%
+    group_by(tissue.type) %>%
+    mutate(proportion = count / sum(count) * 100) %>%
+    ungroup()
+
+p7 <- ggplot(prop_ct,
+             aes(x    = factor(tissue.type, levels = c("NL","LP","CA","LN")),
+                 y    = proportion,
+                 fill = celltypist_label)) +
+    geom_bar(stat = "identity", width = 0.7) +
+    scale_fill_manual(values = ct_subtype_colors) +
+    scale_y_continuous(labels = percent_format(scale = 1)) +
+    labs(title = paste0(study_id, " | CellTypist Subtype Proportions by Tissue Type"),
+         x     = "Tissue Type",
+         y     = "Proportion (%)",
+         fill  = "CellTypist Label") +
+    theme_minimal(base_size = 14) +
+    theme(plot.title      = element_text(hjust = 0.5, face = "bold"),
+          legend.position = "right")
+
+ggsave(file.path(plot_dir, paste0(study_id, "_TME_CellTypist_subtype_stacked.png")),
+       p7, width = 12, height = 7, dpi = 300, bg = "white")
+p7
+```
+
+
+# STEP 13: Key Marker Gene Dot Plot per Cell Type
+```{r marker_dotplot}
+# Canonical marker genes for each of the 10 HNSCC cell types
+# Dot size = % cells expressing the gene
+# Dot color = average expression level
+
+# Canonical HNSCC marker genes per cell type
+markers <- c(
+    # T cells
+    "CD3D", "CD3E", "CD8A", "CD4",
+    # B/Plasma cells
+    "CD19", "MS4A1", "MZB1", "IGHG1",
+    # Macrophages
+    "CD68", "LYZ", "AIF1", "CD14",
+    # Dendritic cells
+    "CLEC9A", "CD1C", "FCER1A", "IL3RA",
+    # Fibroblasts
+    "DCN", "COL1A1", "COL1A2", "FAP",
+    # Endothelial cells
+    "PECAM1", "VWF", "CDH5", "CLDN5",
+    # Malignant cells
+    "KRT5", "KRT14", "KRT6A", "TACSTD2",
+    # Epithelial cells
+    "KRT8", "KRT18", "EPCAM", "KRT19",
+    # Mast cells
+    "TPSAB1", "CPA3", "MS4A2", "HDC",
+    # Myocytes
+    "ACTA2", "MYH11", "TAGLN", "CNN1"
+)
+
+# Keep only genes present in the dataset
+markers <- markers[markers %in% rownames(seurat_obj)]
+
+# Set author cell type as identity
+Idents(seurat_obj) <- "cell.type"
+
+p8 <- DotPlot(seurat_obj,
+              features   = markers,
+              cols       = c("lightgrey", "#E41A1C"),
+              dot.scale  = 6,
+              group.by   = "cell.type") +
+    coord_flip() +
+    labs(title = paste0(study_id, " | Canonical Marker Genes per Cell Type"),
+         x     = "Gene",
+         y     = "Cell Type") +
+    theme_minimal(base_size = 11) +
+    theme(plot.title  = element_text(hjust = 0.5, face = "bold"),
+          axis.text.x = element_text(angle = 45, hjust = 1),
+          axis.text.y = element_text(size = 9))
+
+ggsave(file.path(plot_dir, paste0(study_id, "_TME_marker_dotplot.png")),
+       p8, width = 14, height = 12, dpi = 300, bg = "white")
+p8
+```
+
+
+# STEP 14: Save Proportion Tables
+```{r save_results}
+# Cell type proportions by tissue type
+write.csv(prop_tissue,
+          file.path(result_dir, paste0(study_id, "_TME_proportions_by_tissue.csv")),
+          row.names = FALSE)
+
+# Cell type proportions by HPV status
+write.csv(prop_hpv,
+          file.path(result_dir, paste0(study_id, "_TME_proportions_by_HPV.csv")),
+          row.names = FALSE)
+
+# TME compartment ratios
+write.csv(prop_compartment,
+          file.path(result_dir, paste0(study_id, "_TME_compartment_ratios.csv")),
+          row.names = FALSE)
+
+# CellTypist subtype proportions
+write.csv(prop_ct,
+          file.path(result_dir, paste0(study_id, "_TME_CellTypist_subtypes.csv")),
+          row.names = FALSE)
+
+cat("All proportion tables saved ✅\n")
+cat("\n=== TME Analysis Summary ===\n")
+cat("Plots generated: 8 (4 stacked + 4 grouped bar plots + dot plot)\n")
+cat("Results saved:   4 CSV tables\n")
+cat("Output dir:     ", plot_dir, "\n")
+```
