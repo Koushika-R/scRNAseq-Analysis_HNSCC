@@ -114,10 +114,11 @@ b) HPV– tumors are macrophage-rich (21% vs 5%) and fibroblast-rich (14% vs 1%)
 c) Malignant cells are more abundant in HPV+ tumors (23% vs 11%), consistent with HPV oncoprotein-driven cell proliferation. 
 
 
-# Plots Generated:
+# Plots Generated: (GSE181919_TME_Anlaysis_plots.pdf)
 a) Cell type proportions by tissue type — stacked and grouped bar plots
 b) Cell type proportions by HPV status — stacked and grouped bar plots (CA only)
 c) TME compartment ratios (Immune/Stromal/Malignant) — stacked and grouped bar plots
 d) CellTypist subtype proportions by tissue type — stacked bar plot with 15 subtypes
 e) Canonical marker gene dot plot — 40 genes across 10 cell types
+
 
