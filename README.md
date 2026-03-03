@@ -152,4 +152,24 @@ g) State proportions by HPV status and tissue type (2 bar plots)
 h) Exhaustion marker dot plot per T cell state
 
 
+# Step 7 — Differential Expression Analysis (06_GSE181919_DifferentialExpression.Rmd)
+# Cell Type Marker Genes: 
+9,206 marker genes identified across 10 cell types. All cell types show clean, biologically specific markers: Malignant cells (KRT6A/KRT6B), B/Plasma cells (JCHAIN/MZB1/CD79A), Macrophages (FCN1/C1QC/CD163), Fibroblasts (ASPN/CILP), Mast cells (TPSAB1/CPA3), Myocytes (MYH2/COX6A2/MYF5).
 
+# Pseudobulk DESeq2 — NL vs CA: 
+Pseudobulk aggregation across 23 patients used as true biological replicates. Fibroblasts show the most dramatic reprogramming (5,388 DEGs), consistent with their proportional collapse from 52% to 9%. B/Plasma cells show the strongest downregulation bias (474 up vs 2,289 down). Top upregulated genes: CXCL13 in both T cells and fibroblasts (exhaustion + CAF convergence), ADAM12 (CAF activation), MMP12 (TAM remodeling), COL4A1/COL4A2 (tumor angiogenesis). Top downregulated: LYVE1 (tissue-resident macrophage identity lost), CLEC3B (normal fibroblast marker lost), CFD/APOD (normal B cell programs lost).
+
+# Pseudobulk DESeq2 — CA vs LN: 
+Very few DEGs (30/15/20 for T cells/Macrophages/B cells) — biologically meaningful. All DEGs are upregulated in LN, confirming that the tumor immune program established at CA is fully maintained through metastasis.
+
+# Pseudobulk DESeq2 — HPV+ vs HPV– (CA only): 
+HPV+ Tcells and macrophages upregulate heat shock proteins (HSPA1A, HSPA6, DNAJB1, BAG3) — HPV viral proteins induce proteotoxic stress. HPV– macrophages are pro-inflammatory chemokine-secreting (CXCL3, CXCL8, CXCL2, CCL3 all higher), consistent with macrophage-rich immunosuppressive TME from Script 04. 113 Tcell DEGs and 182 macrophage DEGs between HPV groups.
+
+**Key Cross-Analysis Finding**: CXCL13 is the top upregulated gene in both T cells AND fibroblasts (NL vs CA) — exhausted T cells and CAFs converge to recruit B cells and form tertiary lymphoid structures, directly explaining B/Plasma cell expansion from 5% (NL) to 18% (CA).
+Plots Generated: Top 5 marker heatmap, Top 30 DEG heatmap T cells NL vs CA, 5 volcano plots NL vs CA, 2 volcano plots HPV+ vs HPV–.
+
+# Plots Generated: 
+a) Top 5 marker heatmap
+b) Top 30 DEG heatmap T cells NL vs CA
+c) 5 volcano plots NL vs CA
+d) 2 volcano plots HPV+ vs HPV–
