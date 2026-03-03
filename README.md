@@ -120,5 +120,3 @@ b) Cell type proportions by HPV status — stacked and grouped bar plots (CA onl
 c) TME compartment ratios (Immune/Stromal/Malignant) — stacked and grouped bar plots
 d) CellTypist subtype proportions by tissue type — stacked bar plot with 15 subtypes
 e) Canonical marker gene dot plot — 40 genes across 10 cell types
-
-
