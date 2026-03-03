@@ -173,3 +173,28 @@ a) Top 5 marker heatmap
 b) Top 30 DEG heatmap T cells NL vs CA
 c) 5 volcano plots NL vs CA
 d) 2 volcano plots HPV+ vs HPV–
+
+
+# Step 8 — Cell-Cell Communication Analysis (07_GSE181919_CellChat_Cell-Cell_Communication_Analysis.Rmd)
+# Interaction Summary: 
+CellChat computed ligand-receptor communication probabilities across 1,609 L-R pairs for 5 conditions using the triMean method across Secreted Signaling, ECM-Receptor, and Cell-Cell Contact databases.
+Condition |Cells |Interactions |Strength |Pathways|
+NL| 16,384| 688| 17.88| 58
+CA| 21,042| 2,123| 51.64| 87
+LN| 8,038| 1,731| 56.68| 88
+HPV+| 9,030| 1,685| 49.78| 86
+HPV– | 12,012| 2,121| 53.45| 89
+
+# Network Centrality — Signaling Role Shifts:
+NL: Fibroblasts dominant sender, T cells moderate receiver, all cell types low intensity. 
+CA: Fibroblasts remain top sender (outgoing ~18), Macrophages become top receiver (incoming ~9.5), Tcells secondary receiver (~7.8). 
+LN: Tcells become highest receiver (~12.3), Macrophages dual sender/receiver, Fibroblasts still top sender.
+
+# Key Mechanistic Circuits Identified:
+**CAF Broadcasting:** Fibroblasts send COLLAGEN/LAMININ/FN1/TGFb/VEGF simultaneously to all cell types. COL1A1/1A2, COL4A1/4A2, LAMA2/4 → integrin receptors on Malignant cells at highest intensity — invasion scaffold formation.
+**TAM Integration:** Macrophages receive MIF, GALECTIN, CXCL, PLAU signals from all cell types → pro-tumor polarization. VISFATIN pathway: Macrophages as dominant receiver — metabolic immunosuppression.
+**T Cell Exhaustion via MHC-I + GALECTIN-TIM3:** ALL cell types present antigen via MHC-I (HLA-A/B/C/E/F → CD8A/CD8B) to CD8+ T cells simultaneously. LGALS9 → HAVCR2 (Galectin-9 → TIM-3) from Dendritic cells confirmed as primary checkpoint axis. CD80 → CTLA4/CD28 from Macrophages adds co-stimulation/inhibition balance layer.
+**HPV Immune Evasion:** HPV+ tumors suppress MHC-II signaling (HLA-DR/DQ/DP → CD4) from Dendritic cells to CD4+ T cells — direct viral evasion of helper T cell surveillance absent in HPV– tumors. HPV– compensates with broader GALECTIN and CD80/CTLA4 T cell exhaustion pathways.
+
+Technical Fix Applied: subsetCellChat() required before mergeCellChat() because NL lacks Malignant cells and Epithelial/Myocytes are absent in CA — non-conformable arrays error resolved by subsetting to shared cell types per comparison.
+
