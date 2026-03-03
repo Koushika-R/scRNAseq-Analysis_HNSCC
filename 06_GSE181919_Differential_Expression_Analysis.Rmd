@@ -1,0 +1,660 @@
+---
+title: "06_GSE181919_Differential Expression Analysis"
+author: "Koushika R"
+date: "2026-03-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_knit$set(root.dir = "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC")
+```
+
+
+# STEP 1: Define Paths
+```{r paths}
+base_dir   <- "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC"
+output_dir <- file.path(base_dir, "output")
+plot_dir   <- file.path(base_dir, "plots", "DEG_plots")
+result_dir <- file.path(base_dir, "results", "DEG")
+study_id   <- "GSE181919"
+
+dir.create(plot_dir,   showWarnings = FALSE, recursive = TRUE)
+dir.create(result_dir, showWarnings = FALSE, recursive = TRUE)
+
+cat("Paths defined ✅\n")
+```
+
+
+# STEP 2: Load Libraries
+```{r libraries}
+# DESeq2:     Pseudobulk DEG — gold standard for condition comparisons
+#             Aggregates cells per sample → treats samples as replicates
+#             Avoids false positives from treating cells as independent
+# ggrepel:    Non-overlapping labels on volcano plots
+# pheatmap:   Heatmap of top DEGs across conditions
+# =============================================================================
+
+#BiocManager::install('DESeq2')
+#install.packages('ggrepel')
+#install.packages('pheatmap')
+
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(DESeq2)
+library(ggrepel)
+library(pheatmap)
+library(RColorBrewer)
+library(scales)
+
+cat("Libraries loaded ✅\n")
+```
+
+
+# STEP 3: Load Annotated Seurat Object
+```{r load_seurat}
+# Input: 05_GSE181919_celltypist_annotated.rds
+# Contains: cell.type (10 types), tissue.type (NL/LP/CA/LN),
+#           hpv, patient.id, celltypist_label
+# =============================================================================
+
+cat("Loading Seurat object...\n")
+seurat_obj <- readRDS(
+    file.path(output_dir, "05_GSE181919_celltypist_annotated.rds")
+)
+seurat_obj <- UpdateSeuratObject(seurat_obj)
+
+cat("Loaded:", ncol(seurat_obj), "cells ×", nrow(seurat_obj), "genes\n")
+cat("Cell types:", paste(unique(seurat_obj$cell.type), collapse = ", "), "\n")
+cat("Tissue types:", paste(unique(seurat_obj$tissue.type), collapse = ", "), "\n")
+```
+
+# STEP 4: Find Marker Genes per Cell Type (FindAllMarkers)
+```{r marker_genes}
+# Identifies genes that distinguish each cell type from all others
+# Method: Wilcoxon rank-sum test (fast, non-parametric)
+# Filters:
+#   min.pct = 0.25    → gene expressed in ≥25% of cells in either group
+#   logfc.threshold = 0.25 → minimum log2 fold change
+# This is cell identity markers — NOT condition comparison
+
+Idents(seurat_obj) <- "cell.type"
+
+cat("Finding marker genes per cell type...\n")
+#This may take 5-10 minutes for 51,849 cells
+
+all_markers <- FindAllMarkers(
+    seurat_obj,
+    only.pos       = TRUE,
+    min.pct        = 0.25,
+    logfc.threshold = 0.25,
+    test.use       = "wilcox"
+)
+
+cat("Done ✅\n")
+cat("Total marker genes found:", nrow(all_markers), "\n")
+
+# Top 10 markers per cell type
+top10_markers <- all_markers %>%
+    group_by(cluster) %>%
+    slice_max(order_by = avg_log2FC, n = 10) %>%
+    ungroup()
+
+cat("\nTop 10 markers per cell type:\n")
+print(top10_markers %>% select(cluster, gene, avg_log2FC, p_val_adj))
+
+# Save all markers
+write.csv(all_markers,
+          file.path(result_dir, paste0(study_id, "_all_cell_type_markers.csv")),
+          row.names = FALSE)
+cat("\nMarkers saved ✅\n")
+```
+
+
+# STEP 5: Heatmap of Top Marker Genes per Cell Type
+```{r marker_heatmap}
+# Visualizes top 5 marker genes per cell type
+# Color = scaled average expression per cell type
+
+top5_markers <- all_markers %>%
+    group_by(cluster) %>%
+    slice_max(order_by = avg_log2FC, n = 5) %>%
+    ungroup()
+
+# Downsample for plotting speed
+set.seed(88)
+seurat_down <- subset(seurat_obj,
+                      cells = sample(colnames(seurat_obj), 5000))
+
+p1 <- DoHeatmap(seurat_down,
+                features = top5_markers$gene,
+                group.by = "cell.type",
+                size     = 3,
+                angle    = 45) +
+    scale_fill_gradientn(colors = c("#2166AC", "white", "#E41A1C")) +
+    labs(title = paste0(study_id, " | Top 5 Marker Genes per Cell Type")) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 12),
+          axis.text.y = element_text(size = 6))
+
+ggsave(file.path(plot_dir, paste0(study_id, "_DEG_marker_heatmap.png")),
+       p1, width = 16, height = 12, dpi = 150, bg = "white")
+p1
+```
+
+
+```{r Quick_check}
+# Quick diagnostic — check what AggregateExpression actually names its columns
+
+# Test with T cells only
+test_sub <- subset(seurat_obj,
+                   cells = which(seurat_obj$cell.type == "T.cells" &
+                                 seurat_obj$tissue.type %in% c("NL","CA")))
+
+# Build sample_id
+test_sub$sample_id <- paste0(test_sub$patient.id, "_",
+                              test_sub$tissue.type)
+
+cat("Sample IDs we built:\n")
+print(head(unique(test_sub$sample_id), 10))
+
+# Run AggregateExpression
+test_counts <- AggregateExpression(
+    test_sub,
+    group.by      = "sample_id",
+    assays        = "RNA",
+    slot          = "counts",
+    return.seurat = FALSE
+)$RNA
+
+cat("\nColumn names from AggregateExpression:\n")
+print(head(colnames(test_counts), 10))
+
+cat("\nDo they match?\n")
+cat("Built sample_ids:", length(unique(test_sub$sample_id)), "\n")
+cat("AggregateExpression cols:", ncol(test_counts), "\n")
+```
+
+
+
+# STEP 6: Pseudobulk Setup for Condition DEG
+```{r pseudobulk_setup}
+# Why pseudobulk?
+#   - Single-cell DEG methods (Wilcoxon) treat each cell as independent
+#   - But cells from the same patient are NOT independent — they share patient-level variation (genetics, treatment history)
+#   - Pseudobulk aggregates all cells of the same type per patient → sample
+#   - This gives TRUE biological replicates (23 patients)
+#   - DESeq2 then finds genes that differ between conditions across patients
+#
+# Comparisons planned:
+#   1. NL vs CA  — normal vs primary cancer (key disease comparison)
+#   2. CA vs LN  — primary cancer vs metastasis
+#   3. HPV+ vs HPV– in CA T cells — key immunotherapy question
+#
+# We run DEG for major cell types with enough cells across conditions:
+# Fix: AggregateExpression converts "_" → "-" in column names
+# Solution: build sample_id with "-" to match output directly
+
+make_pseudobulk <- function(seurat, celltype, group_col, groups,
+                             patient_col  = "patient.id",
+                             celltype_col = "cell.type") {
+
+    keep <- which(seurat[[celltype_col]][,1] == celltype &
+                  seurat[[group_col]][,1] %in% groups)
+    sub  <- subset(seurat, cells = keep)
+    cat("  Cells in", celltype, ":", ncol(sub), "\n")
+
+    # Use "-" not "_" — AggregateExpression replaces "_" with "-"
+    sub$sample_id <- paste0(
+        sub[[patient_col]][,1], "-",
+        sub[[group_col]][,1]
+    )
+
+    # Aggregate counts
+    counts <- AggregateExpression(
+        sub,
+        group.by      = "sample_id",
+        assays        = "RNA",
+        slot          = "counts",
+        return.seurat = FALSE
+    )$RNA
+
+    # Build colData from column names directly
+    col_df <- data.frame(
+        sample_id = colnames(counts),
+        condition = sapply(strsplit(colnames(counts), "-"), tail, 1),
+        row.names = colnames(counts)
+    )
+
+    cat("  Samples:", nrow(col_df),
+        "| Conditions:", paste(unique(col_df$condition), collapse = "/"), "\n")
+
+    list(counts = counts, coldata = col_df)
+}
+
+cat("Fixed pseudobulk function v2 defined ✅\n")
+```
+
+
+# STEP 7: DEG — NL vs CA per Cell Type (Pseudobulk DESeq2)
+```{r deg_nl_vs_ca}
+# Identifies genes that change between normal tissue and primary cancer per cell type — reveals cell-type-specific transcriptional reprogramming
+# Reference = NL, Test = CA → positive LFC = upregulated in CA
+# =============================================================================
+
+# Cell types with sufficient cells in both NL and CA
+celltypes_nlca <- c("T.cells", "Macrophages", "Fibroblasts",
+                    "B_Plasma.cells", "Endothelial.cells")
+
+deg_nlca_list <- list()
+
+for (ct in celltypes_nlca) {
+    cat("\nProcessing:", ct, "(NL vs CA)\n")
+
+    tryCatch({
+        pb     <- make_pseudobulk(seurat_obj, ct, "tissue.type", c("NL","CA"))
+        counts <- pb$counts
+        coldat <- pb$coldata
+
+        # Keep only samples with ≥10 cells (already aggregated — use all)
+        dds <- DESeqDataSetFromMatrix(
+            countData = round(counts),
+            colData   = coldat,
+            design    = ~ condition
+        )
+
+        # Filter low-count genes
+        dds <- dds[rowSums(counts(dds)) >= 10, ]
+        dds$condition <- relevel(factor(dds$condition), ref = "NL")
+        dds <- DESeq(dds, quiet = TRUE)
+
+        res <- results(dds, contrast = c("condition", "CA", "NL"),
+                       alpha = 0.05)
+        res_df <- as.data.frame(res) %>%
+            tibble::rownames_to_column("gene") %>%
+            filter(!is.na(padj)) %>%
+            arrange(padj)
+
+        deg_nlca_list[[ct]] <- res_df
+        cat("  Significant DEGs (padj<0.05):",
+            sum(res_df$padj < 0.05, na.rm = TRUE), "\n")
+
+        # Save per cell type
+        write.csv(res_df,
+                  file.path(result_dir,
+                            paste0(study_id, "_DEG_NLvsCA_",
+                                   gsub("\\.", "_", ct), ".csv")),
+                  row.names = FALSE)
+
+    }, error = function(e) cat("  Skipped:", ct, "-", e$message, "\n"))
+}
+
+cat("\nNL vs CA DEG complete ✅\n")
+```
+
+
+# STEP 8: DEG — CA vs LN per Cell Type (Pseudobulk DESeq2)
+```{r deg_ca_vs_ln}
+# Identifies genes that change during metastasis
+# Reference = CA, Test = LN → positive LFC = upregulated in metastasis
+
+celltypes_caln <- c("T.cells", "Macrophages", "B_Plasma.cells")
+
+deg_caln_list <- list()
+
+for (ct in celltypes_caln) {
+    cat("\nProcessing:", ct, "(CA vs LN)\n")
+
+    tryCatch({
+        pb     <- make_pseudobulk(seurat_obj, ct, "tissue.type", c("CA","LN"))
+        counts <- pb$counts
+        coldat <- pb$coldata
+
+        dds <- DESeqDataSetFromMatrix(
+            countData = round(counts),
+            colData   = coldat,
+            design    = ~ condition
+        )
+        dds <- dds[rowSums(counts(dds)) >= 10, ]
+        dds$condition <- relevel(factor(dds$condition), ref = "CA")
+        dds <- DESeq(dds, quiet = TRUE)
+
+        res <- results(dds, contrast = c("condition", "LN", "CA"),
+                       alpha = 0.05)
+        res_df <- as.data.frame(res) %>%
+            tibble::rownames_to_column("gene") %>%
+            filter(!is.na(padj)) %>%
+            arrange(padj)
+
+        deg_caln_list[[ct]] <- res_df
+        cat("  Significant DEGs (padj<0.05):",
+            sum(res_df$padj < 0.05, na.rm = TRUE), "\n")
+
+        write.csv(res_df,
+                  file.path(result_dir,
+                            paste0(study_id, "_DEG_CAvsLN_",
+                                   gsub("\\.", "_", ct), ".csv")),
+                  row.names = FALSE)
+
+    }, error = function(e) cat("  Skipped:", ct, "-", e$message, "\n"))
+}
+
+cat("\nCA vs LN DEG complete ✅\n")
+```
+
+# STEP 9: HPV+ vs HPV–
+```{r deg_hpv}
+# Fix: "HPV-" contains "-" which is our delimiter — use a lookup table
+# instead of parsing condition back from column names
+
+
+celltypes_hpv <- c("T.cells", "Macrophages")
+deg_hpv_list  <- list()
+
+seurat_ca <- subset(seurat_obj, subset = tissue.type == "CA")
+
+make_pseudobulk_hpv <- function(seurat, celltype,
+                                 patient_col  = "patient.id",
+                                 celltype_col = "cell.type") {
+
+    keep <- which(seurat[[celltype_col]][,1] == celltype &
+                  seurat$hpv %in% c("HPV+", "HPV-"))
+    sub  <- subset(seurat, cells = keep)
+    cat("  Cells in", celltype, ":", ncol(sub), "\n")
+
+    # Use patient-hpv as sample id — replace "+" and "-" with words
+    sub$hpv_clean  <- ifelse(sub$hpv == "HPV+", "HPVpos", "HPVneg")
+    sub$sample_id  <- paste0(sub[[patient_col]][,1], "-", sub$hpv_clean)
+
+    # Store lookup: sample_id → hpv_clean BEFORE aggregating
+    lookup <- sub@meta.data %>%
+        select(sample_id, condition = hpv_clean) %>%
+        distinct(sample_id, .keep_all = TRUE)
+
+    counts <- AggregateExpression(
+        sub,
+        group.by      = "sample_id",
+        assays        = "RNA",
+        slot          = "counts",
+        return.seurat = FALSE
+    )$RNA
+
+    # Build colData from lookup
+    col_df <- data.frame(
+        sample_id = colnames(counts),
+        row.names = colnames(counts)
+    ) %>%
+        left_join(lookup, by = "sample_id") %>%
+        as.data.frame()
+    rownames(col_df) <- col_df$sample_id
+
+    cat("  Samples:", nrow(col_df),
+        "| Conditions:", paste(unique(col_df$condition), collapse = "/"), "\n")
+
+    list(counts = counts, coldata = col_df)
+}
+
+for (ct in celltypes_hpv) {
+    cat("\nProcessing:", ct, "(HPV+ vs HPV–)\n")
+
+    tryCatch({
+        pb     <- make_pseudobulk_hpv(seurat_ca, ct)
+        counts <- pb$counts
+        coldat <- pb$coldata
+
+        dds <- DESeqDataSetFromMatrix(
+            countData = round(counts),
+            colData   = coldat,
+            design    = ~ condition
+        )
+        dds <- dds[rowSums(counts(dds)) >= 10, ]
+
+        # Reference = HPVneg, Test = HPVpos
+        dds$condition <- relevel(factor(dds$condition), ref = "HPVneg")
+        dds <- DESeq(dds, quiet = TRUE)
+
+        res <- results(dds, contrast = c("condition", "HPVpos", "HPVneg"),
+                       alpha = 0.05)
+        res_df <- as.data.frame(res) %>%
+            tibble::rownames_to_column("gene") %>%
+            filter(!is.na(padj)) %>%
+            arrange(padj)
+
+        deg_hpv_list[[ct]] <- res_df
+        cat("  Significant DEGs (padj<0.05):",
+            sum(res_df$padj < 0.05, na.rm = TRUE), "\n")
+
+        write.csv(res_df,
+                  file.path(result_dir,
+                            paste0(study_id, "_DEG_HPVpos_vs_HPVneg_",
+                                   gsub("\\.", "_", ct), ".csv")),
+                  row.names = FALSE)
+
+    }, error = function(e) cat("  Skipped:", ct, "-", e$message, "\n"))
+}
+
+cat("\nHPV DEG complete ✅\n")
+```
+
+
+# STEP 10: Volcano Plots — NL vs CA per Cell Type
+```{r volcano_nlca}
+# X-axis: log2 fold change (CA vs NL)
+# Y-axis: -log10(adjusted p-value)
+# Red:    Upregulated in CA (log2FC > 1, padj < 0.05)
+# Blue:   Downregulated in CA (log2FC < -1, padj < 0.05)
+# Top 10 significant genes labeled per plot
+# =============================================================================
+
+make_volcano <- function(res_df, title,
+                         lfc_thresh = 1, padj_thresh = 0.05,
+                         n_label = 10) {
+    res_df <- res_df %>%
+        mutate(
+            direction = case_when(
+                log2FoldChange >  lfc_thresh & padj < padj_thresh ~ "Up",
+                log2FoldChange < -lfc_thresh & padj < padj_thresh ~ "Down",
+                TRUE ~ "NS"
+            ),
+            neg_log10_padj = -log10(padj)
+        )
+
+    # Top genes to label
+    top_genes <- res_df %>%
+        filter(direction != "NS") %>%
+        slice_min(order_by = padj, n = n_label)
+
+    ggplot(res_df, aes(x = log2FoldChange,
+                       y = neg_log10_padj,
+                       color = direction)) +
+        geom_point(alpha = 0.6, size = 1) +
+        geom_text_repel(data  = top_genes,
+                        aes(label = gene),
+                        size  = 3,
+                        max.overlaps = 20) +
+        scale_color_manual(values = c("Up"   = "#E41A1C",
+                                       "Down" = "#377EB8",
+                                       "NS"   = "grey70")) +
+        geom_vline(xintercept = c(-lfc_thresh, lfc_thresh),
+                   linetype = "dashed", color = "grey40") +
+        geom_hline(yintercept = -log10(padj_thresh),
+                   linetype = "dashed", color = "grey40") +
+        labs(title    = title,
+             x        = "log2 Fold Change",
+             y        = "-log10(adjusted p-value)",
+             color    = "Direction") +
+        theme_minimal(base_size = 12) +
+        theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+}
+
+# Generate volcano for each cell type
+for (ct in names(deg_nlca_list)) {
+    p <- make_volcano(
+        deg_nlca_list[[ct]],
+        title = paste0(study_id, " | NL vs CA — ", ct)
+    )
+    ggsave(file.path(plot_dir,
+                     paste0(study_id, "_volcano_NLvsCA_",
+                            gsub("\\.", "_", ct), ".png")),
+           p, width = 9, height = 7, dpi = 150, bg = "white")
+    print(p)
+}
+```
+
+
+# STEP 11: Volcano Plots — HPV+ vs HPV– (T cells & Macrophages)
+```{r volcano_hpv}
+# Most important comparison — molecular basis of HPV status differences
+# Positive LFC = upregulated in HPV+
+
+
+for (ct in names(deg_hpv_list)) {
+    p <- make_volcano(
+        deg_hpv_list[[ct]],
+        title = paste0(study_id, " | HPV+ vs HPV– — ", ct, " (CA only)")
+    )
+    ggsave(file.path(plot_dir,
+                     paste0(study_id, "_volcano_HPV_",
+                            gsub("\\.", "_", ct), ".png")),
+           p, width = 9, height = 7, dpi = 150, bg = "white")
+    print(p)
+}
+```
+
+
+# STEP 12: Heatmap of Top DEGs — NL vs CA in T Cells
+```{r top_deg_heatmap}
+# Shows expression of top 30 DEGs (15 up + 15 down in CA) across all tissue types — validates progression pattern
+
+if ("T.cells" %in% names(deg_nlca_list)) {
+    res_tcell <- deg_nlca_list[["T.cells"]]
+
+    # Top 15 up and 15 down in CA
+    top_up   <- res_tcell %>%
+        filter(log2FoldChange > 1, padj < 0.05) %>%
+        slice_min(padj, n = 15) %>% pull(gene)
+
+    top_down <- res_tcell %>%
+        filter(log2FoldChange < -1, padj < 0.05) %>%
+        slice_min(padj, n = 15) %>% pull(gene)
+
+    top_genes <- c(top_up, top_down)
+    top_genes <- top_genes[top_genes %in% rownames(seurat_obj)]
+
+    if (length(top_genes) > 0) {
+        # Pseudobulk average expression per tissue type
+        Idents(seurat_obj) <- "cell.type"
+        tcell_sub <- subset(seurat_obj, idents = "T.cells")
+        Idents(tcell_sub) <- "tissue.type"
+
+        avg_exp <- AverageExpression(tcell_sub,
+                                     features   = top_genes,
+                                     assays     = "RNA",
+                                     slot       = "data")$RNA
+        avg_exp <- avg_exp[, c("NL","LP","CA","LN")]
+
+        # Scale rows
+        scaled_exp <- t(scale(t(avg_exp)))
+
+        # Annotation for up/down
+        gene_anno <- data.frame(
+            Direction = ifelse(rownames(scaled_exp) %in% top_up,
+                               "Up in CA", "Down in CA"),
+            row.names = rownames(scaled_exp)
+        )
+
+        anno_colors <- list(
+            Direction = c("Up in CA"   = "#E41A1C",
+                          "Down in CA" = "#377EB8")
+        )
+
+        png(file.path(plot_dir,
+                      paste0(study_id, "_DEG_heatmap_Tcell_NLvsCA.png")),
+            width = 8, height = 10, units = "in", res = 150)
+        pheatmap(scaled_exp,
+                 annotation_row  = gene_anno,
+                 annotation_colors = anno_colors,
+                 color           = colorRampPalette(
+                     c("#2166AC", "white", "#E41A1C"))(100),
+                 cluster_cols    = FALSE,
+                 fontsize_row    = 8,
+                 fontsize_col    = 12,
+                 main            = paste0(study_id,
+                                          " | Top DEGs NL vs CA — T Cells"))
+        dev.off()
+        cat("T cell DEG heatmap saved ✅\n")
+    }
+}
+```
+
+
+# STEP 13: DEG Summary Table
+```{r deg_summary}
+summary_rows <- list()
+
+for (ct in names(deg_nlca_list)) {
+    df  <- deg_nlca_list[[ct]]
+    sig <- df %>% filter(padj < 0.05)
+    summary_rows[[length(summary_rows)+1]] <- data.frame(
+        Comparison = "NL vs CA",
+        Cell_Type  = ct,
+        Total_Tested = nrow(df),
+        Sig_DEGs   = nrow(sig),
+        Up_in_CA   = sum(sig$log2FoldChange > 0),
+        Down_in_CA = sum(sig$log2FoldChange < 0)
+    )
+}
+
+for (ct in names(deg_caln_list)) {
+    df  <- deg_caln_list[[ct]]
+    sig <- df %>% filter(padj < 0.05)
+    summary_rows[[length(summary_rows)+1]] <- data.frame(
+        Comparison = "CA vs LN",
+        Cell_Type  = ct,
+        Total_Tested = nrow(df),
+        Sig_DEGs   = nrow(sig),
+        Up_in_CA   = sum(sig$log2FoldChange < 0),  # Up in LN = neg LFC
+        Down_in_CA = sum(sig$log2FoldChange > 0)
+    )
+}
+
+for (ct in names(deg_hpv_list)) {
+    df  <- deg_hpv_list[[ct]]
+    sig <- df %>% filter(padj < 0.05)
+    summary_rows[[length(summary_rows)+1]] <- data.frame(
+        Comparison = "HPV+ vs HPV–",
+        Cell_Type  = ct,
+        Total_Tested = nrow(df),
+        Sig_DEGs   = nrow(sig),
+        Up_in_CA   = sum(sig$log2FoldChange > 0),  # Up in HPV+
+        Down_in_CA = sum(sig$log2FoldChange < 0)   # Up in HPV–
+    )
+}
+
+summary_df <- bind_rows(summary_rows)
+names(summary_df)[5:6] <- c("Up_in_Test", "Up_in_Ref")
+
+cat("=== DEG Summary ===\n")
+print(summary_df)
+
+write.csv(summary_df,
+          file.path(result_dir,
+                    paste0(study_id, "_DEG_summary.csv")),
+          row.names = FALSE)
+cat("Summary saved ✅\n")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
