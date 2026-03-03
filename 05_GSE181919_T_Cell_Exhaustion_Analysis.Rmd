@@ -1,0 +1,518 @@
+---
+title: "05_GSE181919_T Cell Exhaustion Analysis"
+author: "Koushika R"
+date: "2026-03-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_knit$set(root.dir = "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC")
+```
+
+
+# STEP 1: Define Paths
+```{r paths}
+base_dir   <- "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC"
+output_dir <- file.path(base_dir, "output")
+plot_dir   <- file.path(base_dir, "plots", "Tcell_plots")
+result_dir <- file.path(base_dir, "results")
+study_id   <- "GSE181919"
+
+dir.create(plot_dir,   showWarnings = FALSE, recursive = TRUE)
+dir.create(result_dir, showWarnings = FALSE, recursive = TRUE)
+
+cat("Paths defined ✅\n")
+```
+
+
+# STEP 2: Load Libraries
+```{r libraries}
+# UCell: scoring gene modules (exhaustion signatures) per cell
+#        Better than AddModuleScore — uses rank-based approach,
+#        not affected by cell number or gene expression scale
+
+#BiocManager::install("UCell")
+#install.packages('ggpubr')
+#install.packages('ggridges')
+
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(scales)
+library(RColorBrewer)
+library(UCell)         # Gene module scoring
+library(ggpubr)        # Statistical comparisons on plots
+library(ggridges)      # Ridge plots for score distributions
+
+cat("Libraries loaded ✅\n")
+```
+
+
+# STEP 3: Load Annotated Seurat Object & Subset T Cells
+```{r load_seurat}
+# Input: 05_GSE181919_celltypist_annotated.rds
+# We subset to T cells only using author cell.type labels
+# T cells: 17,533 cells — the largest population in the dataset
+
+
+cat("Loading Seurat object...\n")
+seurat_obj <- readRDS(
+    file.path(output_dir, "05_GSE181919_celltypist_annotated.rds")
+)
+seurat_obj <- UpdateSeuratObject(seurat_obj)
+cat("Full object loaded:", ncol(seurat_obj), "cells\n")
+
+# Subset T cells only
+tcells <- subset(seurat_obj, subset = cell.type == "T.cells")
+cat("T cells subset:", ncol(tcells), "cells\n")
+cat("Tissue type distribution:\n")
+print(table(tcells$tissue.type))
+cat("\nHPV status distribution:\n")
+print(table(tcells$hpv))
+
+# Free full object from memory
+rm(seurat_obj)
+gc()
+cat("Full Seurat object removed from memory ✅\n")
+```
+
+
+# STEP 4: Re-normalize and Re-cluster T Cells
+```{r recluster_tcells}
+# Re-clustering within T cells only gives finer resolution —
+# reveals CD4+, CD8+, Treg, exhausted, naive, memory subclusters
+# that were merged in the full-dataset clustering
+
+
+cat("Re-normalizing T cells...\n")
+
+# Re-normalize within T cell subset
+tcells <- NormalizeData(tcells)
+tcells <- FindVariableFeatures(tcells, nfeatures = 2000)
+tcells <- ScaleData(tcells)
+tcells <- RunPCA(tcells, npcs = 30)
+
+# Cluster T cells
+tcells <- FindNeighbors(tcells, dims = 1:20)
+tcells <- FindClusters(tcells, resolution = 0.5)
+tcells <- RunUMAP(tcells, dims = 1:20)
+
+cat("T cell re-clustering complete ✅\n")
+cat("T cell clusters:", length(unique(tcells$seurat_clusters)), "\n")
+```
+
+
+# STEP 5: Visualize T Cell Subclusters
+```{r tcell_umap_clusters}
+# Plot 1: T cell subclusters
+p1 <- DimPlot(tcells,
+              reduction  = "umap",
+              group.by   = "seurat_clusters",
+              label      = TRUE,
+              label.size = 4,
+              pt.size    = 0.3) +
+    labs(title = paste0(study_id, " | T Cell Subclusters")) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+ggsave(file.path(plot_dir, paste0(study_id, "_Tcell_subclusters.png")),
+       p1, width = 9, height = 7, dpi = 150, bg = "white")
+p1
+
+# Plot 2: T cells colored by tissue type
+p2 <- DimPlot(tcells,
+              reduction = "umap",
+              group.by  = "tissue.type",
+              pt.size   = 0.3) +
+    scale_color_manual(values = c("NL" = "#4DAF4A", "LP" = "#FF7F00",
+                                   "CA" = "#E41A1C", "LN" = "#984EA3")) +
+    labs(title = paste0(study_id, " | T Cells by Tissue Type")) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+ggsave(file.path(plot_dir, paste0(study_id, "_Tcell_tissue_type.png")),
+       p2, width = 9, height = 7, dpi = 150, bg = "white")
+p2
+
+# Plot 3: T cells colored by HPV status
+p3 <- DimPlot(tcells,
+              reduction = "umap",
+              group.by  = "hpv",
+              pt.size   = 0.3) +
+    scale_color_manual(values = c("HPV+" = "#00BFC4", "HPV-" = "#F8766D")) +
+    labs(title = paste0(study_id, " | T Cells by HPV Status")) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+ggsave(file.path(plot_dir, paste0(study_id, "_Tcell_HPV_status.png")),
+       p3, width = 9, height = 7, dpi = 150, bg = "white")
+p3
+```
+
+
+# STEP 6: Key T Cell Marker & Exhaustion Gene Feature Plots
+```{r exhaustion_markers_featureplot}
+
+# Canonical T cell state markers:
+#   CD8A/CD4:      CD8+ cytotoxic vs CD4+ helper
+#   FOXP3/IL2RA:   Regulatory T cells (Tregs)
+#   PDCD1 (PD-1):  Exhaustion checkpoint — upregulated in exhausted T cells
+#   HAVCR2 (TIM-3):Co-inhibitory receptor — marks terminal exhaustion
+#   LAG3:          Inhibitory receptor — exhaustion marker
+#   TIGIT:         Checkpoint — co-expressed with PD-1 in exhaustion
+#   CTLA4:         Checkpoint — Treg marker + early exhaustion
+#   TCF7:          Transcription factor — marks progenitor/stem-like exhausted T cells
+#   GZMB/PRF1:     Cytotoxic effector molecules — functional T cells
+#   MKI67:         Proliferation marker
+# =============================================================================
+
+exhaustion_genes <- c(
+    "CD8A", "CD4", "FOXP3", "IL2RA",
+    "PDCD1", "HAVCR2", "LAG3", "TIGIT", "CTLA4",
+    "TCF7", "GZMB", "PRF1", "MKI67"
+)
+
+# Keep only genes present in dataset
+exhaustion_genes <- exhaustion_genes[exhaustion_genes %in% rownames(tcells)]
+cat("Genes available:", paste(exhaustion_genes, collapse = ", "), "\n")
+
+p4 <- FeaturePlot(tcells,
+                  features   = exhaustion_genes,
+                  ncol       = 4,
+                  pt.size    = 0.1,
+                  order      = TRUE,
+                  cols       = c("lightgrey", "#E41A1C")) &
+    theme(plot.title   = element_text(size = 10, face = "bold"),
+          axis.title   = element_blank(),
+          axis.text    = element_blank(),
+          axis.ticks   = element_blank())
+
+ggsave(file.path(plot_dir, paste0(study_id, "_Tcell_exhaustion_featureplot.png")),
+       p4, width = 16, height = 12, dpi = 150, bg = "white")
+p4
+```
+
+
+# STEP 7: Score T Cell States Using UCell
+```{r exhaustion_scores}
+# UCell assigns a per-cell score for each gene module (0–1 scale)
+# Higher score = stronger expression of that gene program
+#
+# Gene signatures:
+#   Exhausted:      Core exhaustion checkpoint receptors
+#   Effector:       Cytotoxic molecules — functional killing capacity
+#   Naive/Memory:   Early/resting T cell markers
+#   Treg:           Regulatory T cell signature
+#   Progenitor_Tex: Stem-like exhausted T cells (TCF7+ PD-1+)
+#                   — important for immunotherapy response
+# =============================================================================
+
+signatures <- list(
+    Exhausted      = c("PDCD1", "HAVCR2", "LAG3", "TIGIT", "CTLA4"),
+    Effector       = c("GZMB", "PRF1", "IFNG", "TNF", "GZMA"),
+    Naive_Memory   = c("TCF7", "CCR7", "SELL", "LEF1", "IL7R"),
+    Treg           = c("FOXP3", "IL2RA", "IKZF2", "CTLA4", "TNFRSF18"),
+    Progenitor_Tex = c("TCF7", "PDCD1", "SLAMF6", "CXCR5", "TOX")
+)
+
+# Score all signatures
+tcells <- AddModuleScore_UCell(tcells, features = signatures)
+
+cat("UCell scores added ✅\n")
+cat("Score columns:\n")
+print(grep("_UCell", colnames(tcells@meta.data), value = TRUE))
+```
+
+
+# STEP 8: Visualize Exhaustion Scores on UMAP
+```{r exhaustion_umap_scores}
+score_cols <- grep("_UCell", colnames(tcells@meta.data), value = TRUE)
+
+p5 <- FeaturePlot(tcells,
+                  features = score_cols,
+                  ncol     = 3,
+                  pt.size  = 0.1,
+                  order    = TRUE,
+                  cols     = c("lightgrey", "#2166AC")) &
+    theme(plot.title = element_text(size = 10, face = "bold"),
+          axis.title = element_blank(),
+          axis.text  = element_blank(),
+          axis.ticks = element_blank())
+
+ggsave(file.path(plot_dir, paste0(study_id, "_Tcell_state_scores_umap.png")),
+       p5, width = 15, height = 10, dpi = 150, bg = "white")
+p5
+```
+
+
+# STEP 9: Exhaustion Score — HPV+ vs HPV– Violin Plot
+```{r exhaustion_by_hpv_violin}
+# Key comparison: Are T cells more exhausted in HPV+ or HPV– tumors?
+# Filter to CA only — HPV annotation is only meaningful in primary cancer
+# Hypothesis:
+#   HPV+ tumors are T cell-rich (from TME analysis) — chronic antigen
+#   exposure from HPV may drive more exhaustion in HPV+ T cells
+#   OR HPV+ T cells remain more functional due to stronger TCR signaling
+# =============================================================================
+
+tcells_ca <- subset(tcells, subset = tissue.type == "CA")
+cat("CA T cells:", ncol(tcells_ca), "\n")
+cat("HPV distribution in CA T cells:\n")
+print(table(tcells_ca$hpv))
+
+# Reshape for plotting
+score_df <- tcells_ca@meta.data %>%
+    select(hpv, all_of(score_cols)) %>%
+    pivot_longer(cols      = all_of(score_cols),
+                 names_to  = "State",
+                 values_to = "Score") %>%
+    mutate(State = gsub("_UCell", "", State))
+
+# Violin plot with statistical comparison
+p6 <- ggplot(score_df, aes(x = hpv, y = Score, fill = hpv)) +
+    geom_violin(trim  = FALSE, alpha = 0.8) +
+    geom_boxplot(width = 0.1, fill = "white", outlier.size = 0.3) +
+    facet_wrap(~State, scales = "free_y", ncol = 3) +
+    scale_fill_manual(values = c("HPV+" = "#00BFC4", "HPV-" = "#F8766D")) +
+    stat_compare_means(method   = "wilcox.test",
+                       label    = "p.signif",
+                       hide.ns  = FALSE,
+                       size     = 4) +
+    labs(title = paste0(study_id, " | T Cell State Scores: HPV+ vs HPV– (CA only)"),
+         x     = "HPV Status",
+         y     = "UCell Score",
+         fill  = "HPV Status") +
+    theme_minimal(base_size = 12) +
+    theme(plot.title    = element_text(hjust = 0.5, face = "bold"),
+          strip.text    = element_text(face = "bold"),
+          legend.position = "bottom")
+
+ggsave(file.path(plot_dir, paste0(study_id, "_Tcell_scores_HPV_violin.png")),
+       p6, width = 14, height = 10, dpi = 300, bg = "white")
+p6
+```
+
+
+# STEP 10: Exhaustion Score Across Tissue Types — Ridge Plot
+```{r exhaustion_by_tissue_violin}
+# Shows how T cell exhaustion evolves across disease progression
+# Expected: exhaustion score increases NL → LP → CA → LN
+# as T cells encounter chronic antigen stimulation in tumor
+
+
+score_df_tissue <- tcells@meta.data %>%
+    select(tissue.type, all_of(score_cols)) %>%
+    pivot_longer(cols      = all_of(score_cols),
+                 names_to  = "State",
+                 values_to = "Score") %>%
+    mutate(State       = gsub("_UCell", "", State),
+           tissue.type = factor(tissue.type,
+                                levels = c("NL", "LP", "CA", "LN")))
+
+# Ridge plot
+p7 <- ggplot(score_df_tissue,
+             aes(x = Score, y = tissue.type, fill = tissue.type)) +
+    geom_density_ridges(alpha = 0.8, scale = 1.2) +
+    facet_wrap(~State, scales = "free_x", ncol = 3) +
+    scale_fill_manual(values = c("NL" = "#4DAF4A", "LP" = "#FF7F00",
+                                  "CA" = "#E41A1C", "LN" = "#984EA3")) +
+    labs(title = paste0(study_id, " | T Cell State Scores Across Disease Progression"),
+         x     = "UCell Score",
+         y     = "Tissue Type",
+         fill  = "Tissue Type") +
+    theme_minimal(base_size = 12) +
+    theme(plot.title     = element_text(hjust = 0.5, face = "bold"),
+          strip.text     = element_text(face = "bold"),
+          legend.position = "bottom")
+
+ggsave(file.path(plot_dir, paste0(study_id, "_Tcell_scores_tissue_ridge.png")),
+       p7, width = 14, height = 10, dpi = 300, bg = "white")
+p7
+```
+
+
+# STEP 11: Classify T Cells into Discrete States
+```{r tcell_state_classification}
+# Each T cell is assigned to a state based on its highest UCell score
+# States: Exhausted / Effector / Naive_Memory / Treg / Progenitor_Tex
+
+# This converts continuous scores → discrete labels for proportion analysis
+
+# Assign state based on highest score
+tcells$tcell_state <- apply(
+    tcells@meta.data[, score_cols], 1,
+    function(x) {
+        state <- names(which.max(x))
+        gsub("_UCell", "", state)
+    }
+)
+
+cat("T cell state distribution:\n")
+print(table(tcells$tcell_state))
+
+cat("\nT cell states by tissue type:\n")
+print(table(tcells$tissue.type, tcells$tcell_state))
+```
+
+
+# STEP 12: T Cell States on UMAP
+```{r tcell_state_umap}
+state_colors <- c(
+    "Exhausted"      = "#E41A1C",
+    "Effector"       = "#FF7F00",
+    "Naive_Memory"   = "#4DAF4A",
+    "Treg"           = "#984EA3",
+    "Progenitor_Tex" = "#377EB8"
+)
+
+p8 <- DimPlot(tcells,
+              reduction  = "umap",
+              group.by   = "tcell_state",
+              pt.size    = 0.3,
+              label      = TRUE,
+              label.size = 4) +
+    scale_color_manual(values = state_colors) +
+    labs(title = paste0(study_id, " | T Cell States")) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+ggsave(file.path(plot_dir, paste0(study_id, "_Tcell_states_umap.png")),
+       p8, width = 10, height = 7, dpi = 150, bg = "white")
+p8
+```
+
+
+# STEP 13: T Cell State Proportions — HPV+ vs HPV– and by Tissue Type
+```{r tcell_state_proportions}
+
+# Proportions by HPV status (CA only)
+prop_hpv_state <- tcells@meta.data %>%
+    filter(tissue.type == "CA") %>%
+    group_by(hpv, tcell_state) %>%
+    summarise(count = n(), .groups = "drop") %>%
+    group_by(hpv) %>%
+    mutate(proportion = count / sum(count) * 100)
+
+p9 <- ggplot(prop_hpv_state,
+             aes(x = hpv, y = proportion, fill = tcell_state)) +
+    geom_bar(stat = "identity", width = 0.6) +
+    scale_fill_manual(values = state_colors) +
+    scale_y_continuous(labels = percent_format(scale = 1)) +
+    labs(title = paste0(study_id, " | T Cell State Proportions: HPV+ vs HPV– (CA only)"),
+         x     = "HPV Status",
+         y     = "Proportion (%)",
+         fill  = "T Cell State") +
+    theme_minimal(base_size = 14) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+ggsave(file.path(plot_dir, paste0(study_id, "_Tcell_state_HPV_proportions.png")),
+       p9, width = 8, height = 7, dpi = 300, bg = "white")
+p9
+
+# Proportions by tissue type
+prop_tissue_state <- tcells@meta.data %>%
+    group_by(tissue.type, tcell_state) %>%
+    summarise(count = n(), .groups = "drop") %>%
+    group_by(tissue.type) %>%
+    mutate(proportion = count / sum(count) * 100)
+
+p10 <- ggplot(prop_tissue_state,
+              aes(x    = factor(tissue.type, levels = c("NL","LP","CA","LN")),
+                  y    = proportion,
+                  fill = tcell_state)) +
+    geom_bar(stat = "identity", width = 0.7) +
+    scale_fill_manual(values = state_colors) +
+    scale_y_continuous(labels = percent_format(scale = 1)) +
+    labs(title = paste0(study_id, " | T Cell State Proportions Across Progression"),
+         x     = "Tissue Type",
+         y     = "Proportion (%)",
+         fill  = "T Cell State") +
+    theme_minimal(base_size = 14) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+ggsave(file.path(plot_dir, paste0(study_id, "_Tcell_state_tissue_proportions.png")),
+       p10, width = 10, height = 7, dpi = 300, bg = "white")
+p10
+```
+
+
+# STEP 14: Exhaustion Marker Dot Plot per T Cell State
+```{r exhaustion_dotplot}
+
+# Validates discrete state assignments by showing marker gene expression
+# per state — should show:
+#   Exhausted state:      High PDCD1, HAVCR2, LAG3, TIGIT
+#   Effector state:       High GZMB, PRF1, IFNG
+#   Naive/Memory state:   High TCF7, CCR7, SELL, IL7R
+#   Treg state:           High FOXP3, IL2RA, CTLA4
+#   Progenitor_Tex state: High TCF7 + PDCD1 (unique co-expression)
+# =============================================================================
+
+Idents(tcells) <- "tcell_state"
+
+validation_genes <- c(
+    # Exhaustion
+    "PDCD1", "HAVCR2", "LAG3", "TIGIT",
+    # Effector
+    "GZMB", "PRF1", "IFNG", "GZMA",
+    # Naive/Memory
+    "TCF7", "CCR7", "SELL", "IL7R",
+    # Treg
+    "FOXP3", "IL2RA", "IKZF2",
+    # Progenitor
+    "TOX", "SLAMF6", "CXCR5"
+)
+
+validation_genes <- validation_genes[validation_genes %in% rownames(tcells)]
+
+p11 <- DotPlot(tcells,
+               features  = validation_genes,
+               cols      = c("lightgrey", "#2166AC"),
+               dot.scale = 6,
+               group.by  = "tcell_state") +
+    coord_flip() +
+    labs(title = paste0(study_id, " | Exhaustion Markers per T Cell State"),
+         x     = "Gene",
+         y     = "T Cell State") +
+    theme_minimal(base_size = 11) +
+    theme(plot.title  = element_text(hjust = 0.5, face = "bold"),
+          axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave(file.path(plot_dir, paste0(study_id, "_Tcell_exhaustion_dotplot.png")),
+       p11, width = 12, height = 10, dpi = 300, bg = "white")
+p11
+```
+
+
+# STEP 15: Save Results
+```{r save_results}
+
+# Save T cell state proportions by tissue
+write.csv(prop_tissue_state,
+          file.path(result_dir, paste0(study_id,
+                    "_Tcell_state_proportions_by_tissue.csv")),
+          row.names = FALSE)
+
+# Save T cell state proportions by HPV
+write.csv(prop_hpv_state,
+          file.path(result_dir, paste0(study_id,
+                    "_Tcell_state_proportions_by_HPV.csv")),
+          row.names = FALSE)
+
+# Save T cell metadata with states and scores
+write.csv(
+    tcells@meta.data[, c("tissue.type", "hpv", "tcell_state", score_cols)],
+    file.path(result_dir, paste0(study_id, "_Tcell_scores_and_states.csv"))
+)
+
+# Save T cell Seurat object
+saveRDS(tcells,
+        file.path(output_dir, "06_GSE181919_Tcells_exhaustion.rds"),
+        version = 2)
+
+cat("All results saved ✅\n")
+cat("\n=== T Cell Exhaustion Summary ===\n")
+cat("Total T cells analysed: ", ncol(tcells), "\n")
+cat("T cell subclusters:     ", length(unique(tcells$seurat_clusters)), "\n")
+cat("T cell states assigned: ", length(unique(tcells$tcell_state)), "\n")
+cat("\nState distribution:\n")
+print(table(tcells$tcell_state))
+```
