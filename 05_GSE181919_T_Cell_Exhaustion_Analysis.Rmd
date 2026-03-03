@@ -7,13 +7,13 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
-knitr::opts_knit$set(root.dir = "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC")
+knitr::opts_knit$set(root.dir = "~/GSE181919_HNSCC")
 ```
 
 
 # STEP 1: Define Paths
 ```{r paths}
-base_dir   <- "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC"
+base_dir   <- "~/GSE181919_HNSCC"
 output_dir <- file.path(base_dir, "output")
 plot_dir   <- file.path(base_dir, "plots", "Tcell_plots")
 result_dir <- file.path(base_dir, "results")
@@ -29,8 +29,7 @@ cat("Paths defined ✅\n")
 # STEP 2: Load Libraries
 ```{r libraries}
 # UCell: scoring gene modules (exhaustion signatures) per cell
-#        Better than AddModuleScore — uses rank-based approach,
-#        not affected by cell number or gene expression scale
+#        Better than AddModuleScore — uses rank-based approach, not affected by cell number or gene expression scale
 
 #BiocManager::install("UCell")
 #install.packages('ggpubr')
@@ -516,3 +515,4 @@ cat("T cell states assigned: ", length(unique(tcells$tcell_state)), "\n")
 cat("\nState distribution:\n")
 print(table(tcells$tcell_state))
 ```
+
