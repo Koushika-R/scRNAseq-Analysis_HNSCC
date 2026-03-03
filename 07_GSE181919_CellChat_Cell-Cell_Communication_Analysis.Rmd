@@ -1,0 +1,606 @@
+---
+title: "07_GSE181919_CellChat_Cell-Cell_Communication_Analysis"
+author: "Koushika R"
+date: "2026-03-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_knit$set(root.dir = "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC")
+```
+
+
+# STEP 1: Define Paths
+```{r paths}
+base_dir   <- "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC"
+output_dir <- file.path(base_dir, "output")
+plot_dir   <- file.path(base_dir, "plots", "CellChat_plots")
+result_dir <- file.path(base_dir, "results", "CellChat")
+study_id   <- "GSE181919"
+
+dir.create(plot_dir,   showWarnings = FALSE, recursive = TRUE)
+dir.create(result_dir, showWarnings = FALSE, recursive = TRUE)
+
+cat("Paths defined ✅\n")
+```
+
+
+# STEP 2: Load Libraries
+```{r libraries}
+# CellChat: ligand-receptor interaction analysis
+#   - Uses curated database of ~2,000 ligand-receptor pairs
+#   - Computes communication probability per L-R pair per cell type pair
+#   - Aggregates into signaling pathways
+#   - Allows comparison across conditions
+# =============================================================================
+
+BiocManager::install("ComplexHeatmap")
+library(ComplexHeatmap)
+remotes::install_github('jinworks/CellChat')
+library(CellChat)
+install.packages("devtools")
+devtools::install_github("immunogenomics/presto")
+library(presto)
+
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+library(RColorBrewer)
+
+options(stringsAsFactors = FALSE)
+
+cat("Libraries loaded ✅\n")
+```
+
+
+# STEP 3: Load Annotated Seurat Object
+```{r load_seurat}
+cat("Loading Seurat object...\n")
+seurat_obj <- readRDS(
+    file.path(output_dir, "05_GSE181919_celltypist_annotated.rds")
+)
+seurat_obj <- UpdateSeuratObject(seurat_obj)
+
+cat("Loaded:", ncol(seurat_obj), "cells\n")
+cat("Cell types:", paste(sort(unique(seurat_obj$cell.type)), collapse = ", "), "\n")
+cat("Tissue types:", paste(unique(seurat_obj$tissue.type), collapse = ", "), "\n")
+```
+
+
+# STEP 4: Define Cell Type Colors
+```{r color_setup}
+# Consistent colors for all CellChat plots
+
+celltype_colors <- c(
+    "T.cells"            = "#E41A1C",
+    "B_Plasma.cells"     = "#FF7F00",
+    "Macrophages"        = "#984EA3",
+    "Dendritic.cells"    = "#999999",
+    "Mast.cells"         = "#00CED1",
+    "Fibroblasts"        = "#377EB8",
+    "Endothelial.cells"  = "#F781BF",
+    "Malignant.cells"    = "#A65628",
+    "Epithelial.cells"   = "#4DAF4A",
+    "Myocytes"           = "#FFFF33"
+)
+
+cat("Colors defined ✅\n")
+```
+
+
+# STEP 5: CellChat Helper Function
+```{r cellchat_function}
+# Creates and processes a CellChat object from a Seurat subset
+# Pipeline:
+#   1. Extract normalized counts + metadata
+#   2. Create CellChat object
+#   3. Set ligand-receptor database (human, Secreted Signaling + ECM + Cell-Cell)
+#   4. Pre-process expression data
+#   5. Compute communication probabilities
+#   6. Filter weak interactions
+#   7. Compute pathway-level aggregated signals
+#   8. Calculate network centrality (which cells are hubs)
+# =============================================================================
+
+run_cellchat <- function(seurat_sub, group_col = "cell.type",
+                          min_cells = 10) {
+
+    # Remove cell types with too few cells
+    ct_counts <- table(seurat_sub[[group_col]][,1])
+    keep_cts  <- names(ct_counts[ct_counts >= min_cells])
+    seurat_sub <- subset(seurat_sub,
+                         cells = which(seurat_sub[[group_col]][,1]
+                                       %in% keep_cts))
+    cat("  Cell types retained:", paste(sort(keep_cts), collapse=", "), "\n")
+    cat("  Total cells:", ncol(seurat_sub), "\n")
+
+    # Create CellChat object
+    data_input <- GetAssayData(seurat_sub, assay = "RNA", layer = "data")
+    meta       <- seurat_sub@meta.data[, group_col, drop = FALSE]
+    colnames(meta) <- "labels"
+
+    cc <- createCellChat(object   = data_input,
+                         meta     = meta,
+                         group.by = "labels")
+
+    # Set human ligand-receptor database
+    CellChatDB       <- CellChatDB.human
+    CellChatDB.use   <- subsetDB(CellChatDB,
+                                 search  = c("Secreted Signaling",
+                                             "ECM-Receptor",
+                                             "Cell-Cell Contact"),
+                                 key     = "annotation")
+    cc@DB <- CellChatDB.use
+
+    # Pre-process
+    cc <- subsetData(cc)
+    cc <- identifyOverExpressedGenes(cc)
+    cc <- identifyOverExpressedInteractions(cc)
+
+    # Compute communication probabilities
+    cc <- computeCommunProb(cc, type = "triMean")
+    cc <- filterCommunication(cc, min.cells = min_cells)
+
+    # Pathway-level signals
+    cc <- computeCommunProbPathway(cc)
+    cc <- aggregateNet(cc)
+
+    # Network centrality
+    cc <- netAnalysis_computeCentrality(cc, slot.name = "netP")
+
+    cat("  CellChat object complete ✅\n")
+    return(cc)
+}
+
+cat("CellChat helper function defined ✅\n")
+```
+
+
+#=======Steps 6 to 9 takes ~5 to 8 mins each to run completely===================
+
+# STEP 6: Run CellChat — NL (Normal Tissue)
+```{r cellchat_nl}
+cat("Processing NL...\n")
+seurat_nl <- subset(seurat_obj, subset = tissue.type == "NL")
+cc_nl     <- run_cellchat(seurat_nl)
+
+saveRDS(cc_nl,
+        file.path(result_dir, paste0(study_id, "_cellchat_NL.rds")))
+cat("NL CellChat saved ✅\n")
+```
+
+
+# STEP 7: Run CellChat — CA (Primary Cancer)
+```{r cellchat_ca}
+cat("Processing CA...\n")
+seurat_ca <- subset(seurat_obj, subset = tissue.type == "CA")
+cc_ca     <- run_cellchat(seurat_ca)
+
+saveRDS(cc_ca,
+        file.path(result_dir, paste0(study_id, "_cellchat_CA.rds")))
+cat("CA CellChat saved ✅\n")
+```
+
+
+# STEP 8: Run CellChat — LN (Lymph Node Metastasis)
+```{r cellchat_ln}
+cat("Processing LN...\n")
+seurat_ln <- subset(seurat_obj, subset = tissue.type == "LN")
+cc_ln     <- run_cellchat(seurat_ln)
+
+saveRDS(cc_ln,
+        file.path(result_dir, paste0(study_id, "_cellchat_LN.rds")))
+cat("LN CellChat saved ✅\n")
+```
+
+
+# STEP 9: Run CellChat — HPV+ and HPV– (CA only)
+```{r cellchat_hpv}
+cat("Processing HPV+ (CA only)...\n")
+seurat_hpvpos <- subset(seurat_obj,
+                         subset = tissue.type == "CA" & hpv == "HPV+")
+cc_hpvpos     <- run_cellchat(seurat_hpvpos)
+saveRDS(cc_hpvpos,
+        file.path(result_dir, paste0(study_id, "_cellchat_HPVpos.rds")))
+cat("HPV+ CellChat saved ✅\n")
+
+cat("Processing HPV– (CA only)...\n")
+seurat_hpvneg <- subset(seurat_obj,
+                         subset = tissue.type == "CA" & hpv == "HPV-")
+cc_hpvneg     <- run_cellchat(seurat_hpvneg)
+saveRDS(cc_hpvneg,
+        file.path(result_dir, paste0(study_id, "_cellchat_HPVneg.rds")))
+cat("HPV– CellChat saved ✅\n")
+```
+
+
+# STEP 10: Interaction Summary — NL vs CA vs LN
+```{r summary_numbers}
+# Number of interactions and total interaction strength per condition
+cat("=== Interaction Summary ===\n")
+for (nm in c("NL","CA","LN")) {
+    cc  <- get(paste0("cc_", tolower(nm)))
+    cat(nm, "— Interactions:", cc@net$count %>% sum(),
+        "| Strength:", round(cc@net$weight %>% sum(), 2), "\n")
+}
+
+# Comparison object for NL vs CA
+object_list_nlca <- list(NL = cc_nl, CA = cc_ca)
+cc_merged_nlca   <- mergeCellChat(object_list_nlca,
+                                   add.names = c("NL","CA"))
+
+# Comparison object for CA vs LN
+object_list_caln <- list(CA = cc_ca, LN = cc_ln)
+cc_merged_caln   <- mergeCellChat(object_list_caln,
+                                   add.names = c("CA","LN"))
+
+# Comparison object for HPV
+object_list_hpv  <- list(HPVneg = cc_hpvneg, HPVpos = cc_hpvpos)
+cc_merged_hpv    <- mergeCellChat(object_list_hpv,
+                                   add.names = c("HPVneg","HPVpos"))
+
+cat("\nMerged CellChat objects created ✅\n")
+```
+
+
+# STEP 11: Compare Total Interactions — NL vs CA vs LN
+```{r interaction_counts_plot}
+# Bar plots showing how total number and strength of interactions
+# changes across disease progression
+
+png(file.path(plot_dir,
+              paste0(study_id, "_CellChat_interaction_counts_NLvsCA.png")),
+    width = 12, height = 5, units = "in", res = 150)
+compareInteractions(cc_merged_nlca,
+                    show.legend  = FALSE,
+                    group        = c(1,2),
+                    color.use    = c("#4DAF4A","#E41A1C"))
+dev.off()
+
+png(file.path(plot_dir,
+              paste0(study_id, "_CellChat_interaction_counts_CAvsLN.png")),
+    width = 12, height = 5, units = "in", res = 150)
+compareInteractions(cc_merged_caln,
+                    show.legend  = FALSE,
+                    group        = c(1,2),
+                    color.use    = c("#E41A1C","#984EA3"))
+dev.off()
+
+cat("Interaction count plots saved ✅\n")
+```
+
+
+# STEP 12: Circle Plots — NL vs CA Communication Networks
+```{r circle_plots_nlca}
+# Each node = cell type, each edge = communication
+# Edge width = interaction strength
+# Arrows show direction: sender → receiver
+
+
+# Number of interactions
+png(file.path(plot_dir,
+              paste0(study_id, "_CellChat_circle_NL_count.png")),
+    width = 8, height = 8, units = "in", res = 150)
+netVisual_circle(cc_nl@net$count,
+                 vertex.weight  = table(cc_nl@idents),
+                 weight.scale   = TRUE,
+                 label.edge     = FALSE,
+                 title.name     = "NL — Number of Interactions",
+                 color.use      = celltype_colors[names(cc_nl@idents %>%
+                                    levels() %>% intersect(names(celltype_colors)))])
+dev.off()
+
+png(file.path(plot_dir,
+              paste0(study_id, "_CellChat_circle_CA_count.png")),
+    width = 8, height = 8, units = "in", res = 150)
+netVisual_circle(cc_ca@net$count,
+                 vertex.weight  = table(cc_ca@idents),
+                 weight.scale   = TRUE,
+                 label.edge     = FALSE,
+                 title.name     = "CA — Number of Interactions")
+dev.off()
+
+cat("Circle plots saved ✅\n")
+```
+
+# STEP 13: Heatmap — Differential Interactions
+```{r heatmap_nlca}
+# Fix: netVisual_heatmap requires both objects to have identical cell types
+# Solution: use measure = "count" with the raw net slot directly,
+# OR use netVisual_heatmap with the merged object's shared cell types
+# =============================================================================
+
+# Check cell types in each
+cat("NL cell types:", paste(levels(cc_nl@idents), collapse=", "), "\n")
+cat("CA cell types:", paste(levels(cc_ca@idents), collapse=", "), "\n")
+cat("LN cell types:", paste(levels(cc_ln@idents), collapse=", "), "\n")
+
+# Find shared cell types across all three
+shared_nlca <- intersect(levels(cc_nl@idents), levels(cc_ca@idents))
+shared_caln <- intersect(levels(cc_ca@idents), levels(cc_ln@idents))
+
+cat("\nShared NL/CA:", paste(shared_nlca, collapse=", "), "\n")
+cat("Shared CA/LN:", paste(shared_caln, collapse=", "), "\n")
+
+# Subset each CellChat object to shared cell types before merging
+cc_nl_sub <- subsetCellChat(cc_nl, idents.use = shared_nlca)
+cc_ca_sub <- subsetCellChat(cc_ca, idents.use = shared_nlca)
+
+cc_ca_sub2 <- subsetCellChat(cc_ca, idents.use = shared_caln)
+cc_ln_sub  <- subsetCellChat(cc_ln, idents.use = shared_caln)
+
+# Re-merge with matched cell types
+cc_merged_nlca <- mergeCellChat(list(NL = cc_nl_sub, CA = cc_ca_sub),
+                                 add.names = c("NL","CA"))
+cc_merged_caln <- mergeCellChat(list(CA = cc_ca_sub2, LN = cc_ln_sub),
+                                 add.names = c("CA","LN"))
+
+cat("\nRe-merged with shared cell types ✅\n")
+
+# Now plot
+png(file.path(plot_dir,
+              paste0(study_id, "_CellChat_heatmap_diff_NLvsCA.png")),
+    width = 10, height = 8, units = "in", res = 150)
+netVisual_heatmap(cc_merged_nlca,
+                  color.heatmap = c("#377EB8","white","#E41A1C"),
+                  title.name    = "NL vs CA — Differential Interactions")
+dev.off()
+
+png(file.path(plot_dir,
+              paste0(study_id, "_CellChat_heatmap_diff_CAvsLN.png")),
+    width = 10, height = 8, units = "in", res = 150)
+netVisual_heatmap(cc_merged_caln,
+                  color.heatmap = c("#377EB8","white","#E41A1C"),
+                  title.name    = "CA vs LN — Differential Interactions")
+dev.off()
+
+cat("Differential heatmaps saved ✅\n")
+```
+
+
+
+# STEP 14: Top Signaling Pathways in CA
+```{r signaling_pathways_ca}
+# Dot plot of top pathways ranked by communication probability
+# Dot size = number of ligand-receptor pairs
+# Color = total communication probability
+# =============================================================================
+
+# Get top pathways in CA
+top_pathways_ca <- cc_ca@netP$pathways
+cat("Top pathways in CA (", length(top_pathways_ca), "total):\n")
+print(head(top_pathways_ca, 20))
+
+# Focus on exhaustion + stromal pathways
+exhaustion_pathways <- c("PD-L1", "MHC-II", "MHC-I", "CXCL",
+                          "TIGIT", "PDCD1", "CD80", "CTLA4",
+                          "GALECTIN", "CD226", "CD96")
+stromal_pathways    <- c("TGFb", "VEGF", "COLLAGEN", "FN1",
+                          "LAMININ", "MMP", "SPP1", "PERIOSTIN",
+                          "THBS", "ANGPT", "NOTCH")
+
+focus_pathways <- c(exhaustion_pathways, stromal_pathways)
+found_pathways <- focus_pathways[focus_pathways %in% top_pathways_ca]
+
+cat("\nFocus pathways found in CA:\n")
+print(found_pathways)
+```
+
+# STEP 15 (FIXED): Bubble Plots — CA only
+```{r bubble_plots_ca}
+
+# Bubble plot 1: Exhaustion pathways → T cells
+if (length(exhaustion_found) > 0) {
+    png(file.path(plot_dir,
+                  paste0(study_id, "_CellChat_bubble_exhaustion_CA.png")),
+        width = 16, height = 10, units = "in", res = 200, bg = "white")
+    p <- netVisual_bubble(
+        cc_ca,
+        targets.use    = "T.cells",
+        signaling      = exhaustion_found,
+        remove.isolate = TRUE,
+        angle.x        = 45,
+        title.name     = "CA — Exhaustion Pathways → T Cells"
+    )
+    print(p)
+    dev.off()
+    cat("Exhaustion bubble saved ✅\n")
+}
+
+# Bubble plot 2: Stromal pathways from Fibroblasts
+if (length(stromal_found) > 0) {
+    png(file.path(plot_dir,
+                  paste0(study_id, "_CellChat_bubble_stromal_CA.png")),
+        width = 16, height = 10, units = "in", res = 200, bg = "white")
+    p <- netVisual_bubble(
+        cc_ca,
+        sources.use    = "Fibroblasts",
+        signaling      = stromal_found,
+        remove.isolate = TRUE,
+        angle.x        = 45,
+        title.name     = "CA — Stromal Pathways from Fibroblasts"
+    )
+    print(p)
+    dev.off()
+    cat("Stromal bubble saved ✅\n")
+}
+```
+
+
+# STEP 16: Network Centrality — Sender/Receiver/Mediator/Influencer
+```{r centrality_plots}
+# Identifies which cell types are communication HUBS in NL vs CA
+# Sender:    primary signal source
+# Receiver:  primary signal target
+# Mediator:  relays signals between others
+# Influencer: modulates network-wide communication
+# =============================================================================
+
+png(file.path(plot_dir,
+              paste0(study_id, "_CellChat_centrality_NL.png")),
+    width = 10, height = 6, units = "in", res = 150)
+netAnalysis_signalingRole_scatter(cc_nl,
+    title = "NL — Signaling Roles")
+dev.off()
+
+png(file.path(plot_dir,
+              paste0(study_id, "_CellChat_centrality_CA.png")),
+    width = 10, height = 6, units = "in", res = 150)
+netAnalysis_signalingRole_scatter(cc_ca,
+    title = "CA — Signaling Roles")
+dev.off()
+
+png(file.path(plot_dir,
+              paste0(study_id, "_CellChat_centrality_LN.png")),
+    width = 10, height = 6, units = "in", res = 150)
+netAnalysis_signalingRole_scatter(cc_ln,
+    title = "LN — Signaling Roles")
+dev.off()
+
+cat("Centrality plots saved ✅\n")
+```
+
+
+# STEP 17 (FIXED): HPV+ vs HPV–  Differential Communication + Bubble
+```{r hpv_comparison}
+cat("=== HPV Interaction Summary ===\n")
+cat("HPV– interactions:", cc_hpvneg@net$count %>% sum(), "\n")
+cat("HPV+ interactions:", cc_hpvpos@net$count %>% sum(), "\n")
+
+# Differential heatmap
+png(file.path(plot_dir,
+              paste0(study_id, "_CellChat_heatmap_diff_HPV.png")),
+    width = 10, height = 8, units = "in", res = 150, bg = "white")
+netVisual_heatmap(cc_merged_hpv,
+                  color.heatmap = c("#F8766D","white","#00BFC4"),
+                  title.name    = "HPV– vs HPV+ — Differential Interactions")
+dev.off()
+cat("HPV heatmap saved ✅\n")
+
+# HPV bubble plot — exhaustion pathways → T cells
+# Find pathways present in BOTH HPV objects
+exhaustion_hpv_found <- intersect(
+    exhaustion_found,
+    intersect(cc_hpvpos@netP$pathways, cc_hpvneg@netP$pathways)
+)
+cat("Exhaustion pathways in both HPV groups:",
+    paste(exhaustion_hpv_found, collapse=", "), "\n")
+
+if (length(exhaustion_hpv_found) > 0) {
+    png(file.path(plot_dir,
+                  paste0(study_id, "_CellChat_bubble_exhaustion_HPV.png")),
+        width = 16, height = 10, units = "in", res = 200, bg = "white")
+    p <- netVisual_bubble(
+        cc_merged_hpv,
+        targets.use    = "T.cells",
+        signaling      = exhaustion_hpv_found,
+        comparison     = c(1, 2),
+        remove.isolate = TRUE,
+        angle.x        = 45,
+        title.name     = "HPVneg vs HPVpos — Exhaustion Pathways → T Cells"
+    )
+    print(p)
+    dev.off()
+    cat("HPV exhaustion bubble saved ✅\n")
+}
+```
+
+
+# STEP 18: Signaling Role Heatmap — All Pathways in CA
+```{r pathway_heatmap}
+# Fix: limit to top 20 pathways, larger canvas, bigger font
+
+
+# Get top 20 pathways by total outgoing strength
+top20 <- cc_ca@netP$pathways[1:min(20, length(cc_ca@netP$pathways))]
+cat("Top 20 pathways:\n")
+print(top20)
+
+# Outgoing (sender) heatmap
+png(file.path(plot_dir,
+              paste0(study_id, "_CellChat_pathway_heatmap_CA_sender.png")),
+    width = 14, height = 10, units = "in", res = 200, bg = "white")
+netAnalysis_signalingRole_heatmap(
+    cc_ca,
+    pattern       = "outgoing",
+    signaling     = top20,
+    title         = "CA — Outgoing Signaling per Cell Type (Top 20)",
+    color.heatmap = "OrRd",
+    font.size     = 11,
+    font.size.title = 14,
+    width         = 14,
+    height        = 10
+)
+dev.off()
+cat("Sender heatmap saved ✅\n")
+
+# Incoming (receiver) heatmap
+png(file.path(plot_dir,
+              paste0(study_id, "_CellChat_pathway_heatmap_CA_receiver.png")),
+    width = 14, height = 10, units = "in", res = 200, bg = "white")
+netAnalysis_signalingRole_heatmap(
+    cc_ca,
+    pattern       = "incoming",
+    signaling     = top20,
+    title         = "CA — Incoming Signaling per Cell Type (Top 20)",
+    color.heatmap = "GnBu",
+    font.size     = 11,
+    font.size.title = 14,
+    width         = 14,
+    height        = 10
+)
+dev.off()
+cat("Receiver heatmap saved ✅\n")
+```
+
+
+# STEP 19: Save Pathway Summaries as CSV
+```{r save_results}
+# Save pathway lists per condition
+for (nm in c("NL","CA","LN","HPVpos","HPVneg")) {
+    cc  <- get(paste0("cc_", tolower(nm)))
+    df  <- data.frame(
+        condition = nm,
+        pathway   = cc@netP$pathways,
+        stringsAsFactors = FALSE
+    )
+    write.csv(df,
+              file.path(result_dir,
+                        paste0(study_id, "_CellChat_pathways_", nm, ".csv")),
+              row.names = FALSE)
+}
+
+# Save interaction summary
+summary_df <- data.frame(
+    Condition   = c("NL","CA","LN","HPVpos","HPVneg"),
+    N_Cells     = c(ncol(seurat_nl), ncol(seurat_ca), ncol(seurat_ln),
+                    ncol(seurat_hpvpos), ncol(seurat_hpvneg)),
+    N_Interactions = c(
+        sum(cc_nl@net$count),    sum(cc_ca@net$count),
+        sum(cc_ln@net$count),    sum(cc_hpvpos@net$count),
+        sum(cc_hpvneg@net$count)
+    ),
+    Total_Strength = c(
+        round(sum(cc_nl@net$weight),2),    round(sum(cc_ca@net$weight),2),
+        round(sum(cc_ln@net$weight),2),    round(sum(cc_hpvpos@net$weight),2),
+        round(sum(cc_hpvneg@net$weight),2)
+    ),
+    N_Pathways  = c(
+        length(cc_nl@netP$pathways),    length(cc_ca@netP$pathways),
+        length(cc_ln@netP$pathways),    length(cc_hpvpos@netP$pathways),
+        length(cc_hpvneg@netP$pathways)
+    )
+)
+
+cat("=== CellChat Summary ===\n")
+print(summary_df)
+
+write.csv(summary_df,
+          file.path(result_dir,
+                    paste0(study_id, "_CellChat_summary.csv")),
+          row.names = FALSE)
+cat("\nAll results saved ✅\n")
+```
+
