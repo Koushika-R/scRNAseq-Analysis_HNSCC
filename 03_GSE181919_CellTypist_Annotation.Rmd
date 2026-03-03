@@ -1,5 +1,5 @@
 ---
-title: "GSE181919 _ Cell typist Annotation"
+title: "03_GSE181919_Cell typist Annotation"
 author: "Koushika R"
 date: "2026-02-27"
 output: html_document
@@ -19,15 +19,14 @@ print("CellTypist loaded successfully ✅")
 ```
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
-knitr::opts_knit$set(root.dir = "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC")
+knitr::opts_knit$set(root.dir = "~/GSE181919_HNSCC")
 ```
 
 # STEP 1: Define Paths
 ```{r paths}
-# All paths are defined once here and reused throughout the script.
-# model_dir points to the manually downloaded CellTypist .pkl files.
+# All paths are defined here and reused throughout the script.
 
-base_dir   <- "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC"
+base_dir   <- "~/GSE181919_HNSCC"
 output_dir <- file.path(base_dir, "output")
 plot_dir   <- file.path(base_dir, "plots", "celltypist_plots")
 result_dir <- file.path(base_dir, "results")
@@ -320,4 +319,5 @@ cat("CellTypist cell types:  ",
     length(unique(harmony_processed$celltypist_label)), "\n")
 cat("Author cell types:      ", 
     length(unique(harmony_processed$cell.type)), "\n")
+
 ```
