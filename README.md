@@ -113,10 +113,43 @@ a) HPV+ and HPV– tumors show fundamentally different TME compositions. HPV+ tu
 b) HPV– tumors are macrophage-rich (21% vs 5%) and fibroblast-rich (14% vs 1%), suggesting innate immune suppression and desmoplastic stroma dominate in HPV– HNSCC. 
 c) Malignant cells are more abundant in HPV+ tumors (23% vs 11%), consistent with HPV oncoprotein-driven cell proliferation. 
 
-
 # Plots Generated: (GSE181919_TME_Anlaysis_plots.pdf)
 a) Cell type proportions by tissue type — stacked and grouped bar plots
 b) Cell type proportions by HPV status — stacked and grouped bar plots (CA only)
 c) TME compartment ratios (Immune/Stromal/Malignant) — stacked and grouped bar plots
 d) CellTypist subtype proportions by tissue type — stacked bar plot with 15 subtypes
 e) Canonical marker gene dot plot — 40 genes across 10 cell types
+
+
+# Step 6 — T Cell Exhaustion Analysis (05_GSE181919_T_Cell_Exhaustion_Analysis.Rmd)
+# TCell Subclustering:
+Tcells (17,533 cells) were subset from the full annotated object and re-clustered independently, yielding 19 subclusters at resolution 0.5. Re-clustering within Tcells reveals fine-grained heterogeneity invisible in the full dataset — including CD8+ cytotoxic, CD4+ helper, Treg, proliferating (MKI67+), and rare NKT-like populations. NL Tcells concentrate in the upper UMAP region while CA Tcells dominate the central and lower body. HPV+ Tcells enrich the right arm (largest cluster 0), consistent with viral antigen-driven cytotoxic expansion.
+
+# UCell State Scoring:
+Five Tcell functional states were scored per cell using UCell rank-based module scoring, which is robust to differences in cell number and expression scale. Signatures used: Exhausted (PDCD1, HAVCR2, LAG3, TIGIT, CTLA4), Effector (GZMB, PRF1, IFNG, TNF, GZMA), Naive/Memory (TCF7, CCR7, SELL, LEF1, IL7R), Treg (FOXP3, IL2RA, IKZF2, CTLA4, TNFRSF18), and Progenitor_Tex (TCF7, PDCD1, SLAMF6, CXCR5, TOX). All five states were validated by canonical marker gene dot plot.
+
+# HPV+ vs HPV– T Cell States (CA only):
+All five state comparisons were statistically significant (Wilcoxon test, p < 0.0001 for 4/5 states):
+
+State| Direction| Biological Meaning| 
+Effector| Higher in HPV– |HPV– T cells retain cytotoxic capacity
+Exhausted| Higher in HPV– |HPV– TME drives deeper T cell exhaustion
+Naive_Memory| Higher in HPV+| HPV+ T cells are more stem-like and less exhausted
+Progenitor_Tex| Higher in HPV–| More stem-like exhausted T cells in HPV– tumors
+Treg| Higher in HPV–| Stronger immunosuppression in HPV– tumors
+
+# T Cell States Across Disease Progression:
+Exhaustion scores increase progressively from NL → LP → CA → LN. Tregs accumulate at LP/CA and decline at LN. Naive/Memory T cells decrease as disease progresses. Effector T cells peak at LN, consistent with lymph node being an active immune activation site. NL and LP show bimodal score distributions reflecting heterogeneous early T cell states, while CA and LN show unimodal rightward shifts indicating homogeneous late-stage exhaustion.
+
+# Plots Generated (GSE181919_T_Cell_Exhaustion_Analysis.pdf)
+a) T cell subclusters, tissue type, and HPV status UMAPs (3 plots)
+b) Feature plots for 13 exhaustion/effector/Treg genes
+c) UCell state scores on UMAP (5 scores)
+d) Violin plots — HPV+ vs HPV– with Wilcoxon p-values
+e) Ridge plots — state score distributions across NL/LP/CA/LN
+f) T cell states on UMAP
+g) State proportions by HPV status and tissue type (2 bar plots)
+h) Exhaustion marker dot plot per T cell state
+
+
+
