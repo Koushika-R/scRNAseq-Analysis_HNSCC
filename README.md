@@ -168,7 +168,7 @@ HPV+ Tcells and macrophages upregulate heat shock proteins (HSPA1A, HSPA6, DNAJB
 **Key Cross-Analysis Finding**: CXCL13 is the top upregulated gene in both T cells AND fibroblasts (NL vs CA) — exhausted T cells and CAFs converge to recruit B cells and form tertiary lymphoid structures, directly explaining B/Plasma cell expansion from 5% (NL) to 18% (CA).
 Plots Generated: Top 5 marker heatmap, Top 30 DEG heatmap T cells NL vs CA, 5 volcano plots NL vs CA, 2 volcano plots HPV+ vs HPV–.
 
-# Plots Generated: 
+# Plots Generated: (GSE181919_DEG_Analysis.pdf)
 a) Top 5 marker heatmap
 b) Top 30 DEG heatmap T cells NL vs CA
 c) 5 volcano plots NL vs CA
