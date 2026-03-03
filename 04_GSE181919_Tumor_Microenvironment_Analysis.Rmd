@@ -1,5 +1,5 @@
 ---
-title: "04 — GSE181919 Tumor Microenvironment Analysis"
+title: "04_GSE181919_Tumor Microenvironment Analysis"
 author: "Koushika R"
 date: "2026-03-02"
 output: html_document
@@ -7,13 +7,13 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
-knitr::opts_knit$set(root.dir = "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC")
+knitr::opts_knit$set(root.dir = "~/GSE181919_HNSCC")
 ```
 
 
 # STEP 1: Define Paths
 ```{r paths}
-base_dir   <- "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC"
+base_dir   <- "~/GSE181919_HNSCC"
 output_dir <- file.path(base_dir, "output")
 plot_dir   <- file.path(base_dir, "plots", "TME_plots")
 result_dir <- file.path(base_dir, "results")
@@ -455,3 +455,4 @@ cat("Plots generated: 8 (4 stacked + 4 grouped bar plots + dot plot)\n")
 cat("Results saved:   4 CSV tables\n")
 cat("Output dir:     ", plot_dir, "\n")
 ```
+
