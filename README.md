@@ -198,3 +198,76 @@ LN: Tcells become highest receiver (~12.3), Macrophages dual sender/receiver, Fi
 
 Technical Fix Applied: subsetCellChat() required before mergeCellChat() because NL lacks Malignant cells and Epithelial/Myocytes are absent in CA — non-conformable arrays error resolved by subsetting to shared cell types per comparison.
 
+
+# Step 9 — Pseudotime Trajectory Analysis (08_GSE181919_Trajectory_Analysis_Monocle3.Rmd)
+# Trajectory Summary:
+Monocle3 pseudotime trajectories were computed for both the full TME (51,849 cells) and the T cell subset (17,533 cells). The full TME CDS was converted from the annotated Seurat object using as.cell_data_set(), with the principal graph learned using ncenter=100 and minimal_branch_len=10. Cells were ordered using NL T cells as the root (3,850 root cells). The T cell CDS was reprocessed through Monocle3's native preprocess_cds() → reduce_dimension() → cluster_cells() pipeline before graph learning (required for Seurat v5 + monocle3 v1.4.26 compatibility). Root cells were set to Naive_Memory state (4,880 cells).
+
+Metric | Value
+Full TME cells with finite pseudotime | 47,329 / 51,849
+T cells with finite pseudotime | 17,533
+T cell pseudotime range | 0 → 5.46
+Full TME pseudotime range | 0 → 7.65
+Trajectory-variable genes (Moran's I, q<0.05) | 10,833
+T cell gene modules | 6
+
+# Full TME Trajectory Findings:
+Macrophages have the highest median pseudotime (~4.5) among all cell types, confirming they are maximally reprogrammed from the NL T cell root — consistent with CellChat results showing Macrophages as the top signaling receiver in CA. The LP paradox was observed: LP T cells have higher median pseudotime (1.23) than CA T cells (0.81), reflecting maximal stromal field effect before tumor establishment. LN has the lowest median pseudotime (0.23) despite being the most advanced disease stage, indicating LN selectively receives naïve-like T cells from blood alongside terminally exhausted cells trafficked from the primary tumor.
+
+# T Cell Trajectory — Disease Progression:
+HPV+ T cells preferentially route toward the terminal exhaustion arm of the UMAP trajectory, while HPV– T cells retain more effector character in the upper arm. This spatial segregation directly confirms Script 06 and Script 07 findings. LN T cells concentrate in the right (terminal exhaustion) arm despite being the metastatic site — confirming that the exhaustion program established in CA is maintained through metastasis.
+
+# Exhaustion Gene Dynamics Along Pseudotime:
+TIGIT is the only checkpoint marker monotonically increasing along the entire pseudotime, making it the dominant progressive checkpoint in HNSCC. CXCL13 peaks early at pseudotime ~0.5 (progenitor exhausted state) and declines — CXCL13+ cells are transitional, not terminal. HAVCR2 and LAG3 show bimodal peaks representing two waves of upregulation. TCF7 declines from pseudotime ~0.3, confirming progenitor state is lost early. FOXP3 rises explosively at pseudotime >3, confirming Treg activation is exclusively a late/terminal event. The exhaustion sequence is: GZMB early activation → CXCL13 intermediate TLS signaling → TIGIT/LAG3 late checkpoint lock → FOXP3 Treg terminal immunosuppression.
+
+# HPV+ vs HPV– Exhaustion Curves:
+HPV+ T cells express ~50% more CXCL13 (peak 1.75 vs 1.1) and 2× more HAVCR2 across pseudotime, entering a deeper but more organized exhaustion program. HPV– T cells show shallower but persistent exhaustion — lower checkpoints but sustained PD-1. HPV+ deeper exhaustion paradoxically correlates with better prognosis because the elevated CXCL13 drives stronger TLS formation, creating tertiary lymphoid structures that locally reactivate T cells.
+
+# 6 Gene Co-expression Modules:
+Module | Identity | Key Genes | Peak State | Disease Trend
+1 | Effector/Exhaustion | CXCL13, LAG3, HAVCR2, GZMB, PRF1, TIGIT, PDCD1, TOX | Treg > Exhausted | NL→LN +3× (2.44→7.42)
+2 | Proliferation | STMN1, TYMS, TUBA1B | Progenitor_Tex | CA peak
+3 | Intermediate/Stress | TCF7, HSP90AA1, HSPA1A | Progenitor_Tex | NL→CA +2×
+4 | Minor contamination | FXYD3, S100A14 | Exhausted | Low throughout
+5 | Treg | FOXP3, TNFRSF18, ACTB | Treg >> all | CA/LN specific
+6 | Tumor-associated | ELF3, MAGEA4, MDK | Exhausted | CA specific
+
+# Technical Fixes Applied:
+1. preprocess_cds() → reduce_dimension() → cluster_cells() required before graph_test() — Seurat v5 stores PCA in a format incompatible with Monocle3's graph autocorrelation test
+2. rowData(cds)$gene_short_name must be manually set after as.cell_data_set() conversion — SeuratWrappers v0.4.0 does not populate this field automatically
+3. aggregate_gene_expression() format changed in monocle3 v1.4.26 — replaced with manual sapply() aggregation for robustness
+
+# Plots Generated: (GSE181919_Trajectory_plots.pdf)
+Full TME plots:
+a) GSE181919_fullTME_pseudotime.png — Full TME UMAP colored by pseudotime (0→7.65)
+b) GSE181919_fullTME_celltype.png — Full TME UMAP colored by cell type
+c) GSE181919_fullTME_tissue.png — Full TME UMAP colored by tissue type
+d) GSE181919_fullTME_pseudotime_violin.png — Pseudotime distributions by tissue type and cell type
+
+T cell trajectory plots:
+e) GSE181919_trajectory_Tcell_pseudotime.png — T cell UMAP colored by pseudotime (0→5.46)
+f) GSE181919_trajectory_Tcell_state.png — T cell UMAP colored by exhaustion state
+g) GSE181919_trajectory_Tcell_tissue.png — T cell UMAP colored by tissue type
+h) GSE181919_trajectory_Tcell_HPV.png — T cell UMAP colored by HPV status
+i) GSE181919_trajectory_Tcell_violins.png — T cell pseudotime violins by state/tissue/HPV
+
+Exhaustion gene feature plots (10 genes):
+j) GSE181919_trajectory_Tcell_CXCL13.png — CXCL13 on T cell trajectory
+k) GSE181919_trajectory_Tcell_PDCD1.png — PD-1 on T cell trajectory
+l) GSE181919_trajectory_Tcell_HAVCR2.png — TIM-3 on T cell trajectory
+m) GSE181919_trajectory_Tcell_LAG3.png — LAG-3 on T cell trajectory
+n) GSE181919_trajectory_Tcell_TIGIT.png — TIGIT on T cell trajectory
+o) GSE181919_trajectory_Tcell_TCF7.png — TCF7 (progenitor marker) on T cell trajectory
+p) GSE181919_trajectory_Tcell_TOX.png — TOX (exhaustion TF) on T cell trajectory
+q) GSE181919_trajectory_Tcell_FOXP3.png — FOXP3 (Treg) on T cell trajectory
+r) GSE181919_trajectory_Tcell_GZMB.png — Granzyme B on T cell trajectory
+s) GSE181919_trajectory_Tcell_PRF1.png — Perforin on T cell trajectory
+
+Gene expression curve plots:
+t) GSE181919_trajectory_Tcell_gene_curves.png — All 10 exhaustion genes loess-smoothed along pseudotime
+u) GSE181919_trajectory_Tcell_gene_curves_faceted.png — Faceted individual gene dynamics along pseudotime
+v) GSE181919_trajectory_Tcell_HPV_gene_curves.png — CXCL13/PDCD1/HAVCR2/TOX curves HPV+ vs HPV–
+
+Module heatmaps:
+w) GSE181919_trajectory_Tcell_modules_heatmap.png — Gene modules × T cell exhaustion states
+x) GSE181919_trajectory_Tcell_modules_tissue_heatmap.png — Gene modules × tissue type
