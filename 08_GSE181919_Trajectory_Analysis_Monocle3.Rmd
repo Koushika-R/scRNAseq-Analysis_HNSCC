@@ -7,13 +7,13 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
-knitr::opts_knit$set(root.dir = "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC")
+knitr::opts_knit$set(root.dir = "~/GSE181919_HNSCC")
 ```
 
 
 # STEP 1: Define Paths
 ```{r paths}
-base_dir   <- "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC"
+base_dir   <- "~/GSE181919_HNSCC"
 output_dir <- file.path(base_dir, "output")
 plot_dir   <- file.path(base_dir, "plots", "Trajectory_plots")
 result_dir <- file.path(base_dir, "results", "Trajectory")
@@ -1140,3 +1140,6 @@ cat("Results saved to :", result_dir, "\n")
 cat("\nAll outputs saved ✅\n")
 cat("=======================================================\n")
 ```
+
+
+
