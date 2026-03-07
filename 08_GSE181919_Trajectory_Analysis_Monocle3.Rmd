@@ -1,0 +1,1142 @@
+---
+title: "08_GSE181919_Trajectory_Analysis_(Monocle3)"
+author: "Koushika R"
+date: "2026-03-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+knitr::opts_knit$set(root.dir = "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC")
+```
+
+
+# STEP 1: Define Paths
+```{r paths}
+base_dir   <- "C:/Users/koush/Desktop/Koush/Projects/Workshops/Single Cell RNASeq HandsOn Workshop/GSE181919_HNSCC"
+output_dir <- file.path(base_dir, "output")
+plot_dir   <- file.path(base_dir, "plots", "Trajectory_plots")
+result_dir <- file.path(base_dir, "results", "Trajectory")
+study_id   <- "GSE181919"
+
+dir.create(plot_dir,   showWarnings = FALSE, recursive = TRUE)
+dir.create(result_dir, showWarnings = FALSE, recursive = TRUE)
+
+cat("Paths defined ✅\n")
+```
+
+
+# STEP 2: Libraries
+```{r libraries}
+# Monocle3: pseudotime trajectory inference
+#   - Learns a principal graph through cell state space
+#   - Assigns each cell a pseudotime value (0 = root/start state)
+#   - Root = manually defined based on biology (naive T cells)
+#   - Does NOT require tissue type ordering — learns order from transcriptomics
+#   - SeuratWrappers bridges Seurat ↔ Monocle3
+# =============================================================================
+
+#Install grr from archive (no longer on CRAN)
+#install.packages(
+#    "https://cran.r-project.org/src/contrib/Archive/grr/grr_0.9.5.tar.gz",
+#    repos = NULL,
+#    type  = "source"
+#)
+
+#Install Bioconductor dependencies
+#BiocManager::install(c(
+#    "BiocGenerics", "DelayedArray", "DelayedMatrixStats",
+#    "limma", "lme4", "S4Vectors", "SingleCellExperiment",
+#    "SummarizedExperiment", "batchelor", "HDF5Array", "terra"
+#), update = FALSE, ask = FALSE)
+
+#Install monocle3 from GitHub
+#remotes::install_github(
+#    "cole-trapnell-lab/monocle3",
+#    force = TRUE
+#)
+
+#Install SeuratWrappers
+#remotes::install_github(
+#    "satijalab/seurat-wrappers",
+#    force = TRUE
+#)
+
+# Verify
+library(monocle3)
+library(SeuratWrappers)
+cat("monocle3 version:", as.character(packageVersion("monocle3")), "\n")
+cat("SeuratWrappers version:", as.character(packageVersion("SeuratWrappers")), "\n")
+
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+library(RColorBrewer)
+library(viridis)
+library(pheatmap)
+
+cat("Libraries loaded ✅\n")
+```
+
+
+# STEP 3: Load Seurat Objects
+```{r load_data}
+cat("Loading full annotated Seurat object...\n")
+seurat_obj <- readRDS(
+    file.path(output_dir, "05_GSE181919_celltypist_annotated.rds")
+)
+seurat_obj <- UpdateSeuratObject(seurat_obj)
+
+cat("Loading T cell subset with exhaustion scores...\n")
+seurat_tcell <- readRDS(
+    file.path(output_dir, "06_GSE181919_Tcells_exhaustion.rds")
+)
+seurat_tcell <- UpdateSeuratObject(seurat_tcell)
+
+cat("Full object:", ncol(seurat_obj), "cells\n")
+cat("T cell subset:", ncol(seurat_tcell), "cells\n")
+cat("T cell states:", paste(sort(unique(seurat_tcell$tcell_state)), collapse=", "), "\n")
+```
+
+
+# STEP 4: Color Palettes
+```{r color_setup}
+# Cell type colors (consistent with Scripts 04-07)
+celltype_colors <- c(
+    "T.cells"            = "#E41A1C",
+    "B_Plasma.cells"     = "#FF7F00",
+    "Macrophages"        = "#984EA3",
+    "Dendritic.cells"    = "#999999",
+    "Mast.cells"         = "#00CED1",
+    "Fibroblasts"        = "#377EB8",
+    "Endothelial.cells"  = "#F781BF",
+    "Malignant.cells"    = "#A65628",
+    "Epithelial.cells"   = "#4DAF4A",
+    "Myocytes"           = "#FFFF33"
+)
+
+# Tissue type colors
+tissue_colors <- c(
+    "NL" = "#2CA02C",
+    "LP" = "#FFBB78",
+    "CA" = "#D62728",
+    "LN" = "#9467BD"
+)
+
+# T cell state colors
+state_colors <- c(
+    "Exhausted"       = "#D62728",
+    "Effector"        = "#FF7F0E",
+    "Naive_Memory"    = "#2CA02C",
+    "Treg"            = "#9467BD",
+    "Progenitor_Tex"  = "#1F77B4"
+)
+
+# HPV colors
+hpv_colors <- c("HPV+" = "#E41A1C", "HPV-" = "#377EB8")
+
+cat("Colors defined ✅\n")
+```
+
+
+# STEP 5: Full TME Trajectory — All Cell Types
+```{r full_tme_trajectory}
+# Convert full Seurat object → Monocle3 CDS
+# Use existing UMAP embedding from Harmony-corrected object
+# Learn principal graph across all cell types
+# This gives the macro-level view of TME evolution
+# =============================================================================
+
+cat("Converting full Seurat → Monocle3 CDS...\n")
+
+# Use RNA assay for trajectory
+DefaultAssay(seurat_obj) <- "RNA"
+
+# Convert using SeuratWrappers
+cds_full <- as.cell_data_set(seurat_obj)
+
+# Transfer UMAP coordinates from Seurat
+reducedDim(cds_full, "UMAP") <- Embeddings(seurat_obj, "umap")
+
+# Cluster partitions (required by Monocle3)
+# Use existing Seurat clusters as partitions
+cds_full <- cluster_cells(cds_full, reduction_method = "UMAP",
+                           resolution = 1e-3)
+
+# Learn the principal graph
+cat("Learning principal graph (full TME)...\n")
+cds_full <- learn_graph(cds_full,
+                         use_partition    = TRUE,
+                         verbose          = FALSE,
+                         learn_graph_control = list(
+                             minimal_branch_len = 10,
+                             ncenter           = 100
+                         ))
+
+cat("Principal graph learned ✅\n")
+```
+
+
+# STEP 6: Order Cells — Full TME
+```{r order_cells_full}
+# Root = cells in NL tissue (normal tissue = biological start)
+# Monocle3 orders cells along the graph starting from root
+# =============================================================================
+
+# Define root: NL T cells as the biological starting point
+# (normal tissue naive T cells are the most primitive state)
+root_cells <- colnames(seurat_obj)[
+    seurat_obj$tissue.type == "NL" &
+    seurat_obj$cell.type   == "T.cells"
+]
+cat("Root cells (NL T cells):", length(root_cells), "\n")
+
+# Order cells using defined root
+cds_full <- order_cells(cds_full, root_cells = root_cells)
+
+cat("Cells ordered by pseudotime ✅\n")
+cat("Pseudotime range:",
+    round(min(pseudotime(cds_full)[is.finite(pseudotime(cds_full))]), 2),
+    "to",
+    round(max(pseudotime(cds_full)[is.finite(pseudotime(cds_full))]), 2), "\n")
+```
+
+
+# STEP 7: Plot Full TME Trajectory
+```{r plot_full_tme}
+# Plot 1: Pseudotime on UMAP
+png(file.path(plot_dir,
+              paste0(study_id, "_trajectory_full_pseudotime.png")),
+    width = 10, height = 8, units = "in", res = 200, bg = "white")
+plot_cells(cds_full,
+           color_cells_by          = "pseudotime",
+           label_cell_groups       = FALSE,
+           label_leaves            = FALSE,
+           label_branch_points     = FALSE,
+           graph_label_size        = 3,
+           cell_size               = 0.4,
+           trajectory_graph_color  = "black",
+           trajectory_graph_segment_size = 0.8) +
+    scale_color_viridis(option = "C", name = "Pseudotime") +
+    ggtitle(paste0(study_id, " | Full TME Trajectory — Pseudotime")) +
+    theme_classic(base_size = 12)
+dev.off()
+
+# Plot 2: Cell types on trajectory UMAP
+png(file.path(plot_dir,
+              paste0(study_id, "_trajectory_full_celltype.png")),
+    width = 10, height = 8, units = "in", res = 200, bg = "white")
+plot_cells(cds_full,
+           color_cells_by          = "cell.type",
+           label_cell_groups       = TRUE,
+           label_leaves            = FALSE,
+           label_branch_points     = FALSE,
+           group_label_size        = 3.5,
+           cell_size               = 0.4,
+           trajectory_graph_color  = "grey50",
+           trajectory_graph_segment_size = 0.6) +
+    scale_color_manual(values = celltype_colors, name = "Cell Type") +
+    ggtitle(paste0(study_id, " | Full TME Trajectory — Cell Types")) +
+    theme_classic(base_size = 12)
+dev.off()
+
+# Plot 3: Tissue type on trajectory UMAP
+png(file.path(plot_dir,
+              paste0(study_id, "_trajectory_full_tissue.png")),
+    width = 10, height = 8, units = "in", res = 200, bg = "white")
+plot_cells(cds_full,
+           color_cells_by          = "tissue.type",
+           label_cell_groups       = FALSE,
+           label_leaves            = FALSE,
+           label_branch_points     = FALSE,
+           cell_size               = 0.4,
+           trajectory_graph_color  = "grey30",
+           trajectory_graph_segment_size = 0.6) +
+    scale_color_manual(values = tissue_colors, name = "Tissue") +
+    ggtitle(paste0(study_id, " | Full TME Trajectory — Tissue Type")) +
+    theme_classic(base_size = 12)
+dev.off()
+
+cat("Full TME trajectory plots saved ✅\n")
+```
+
+
+# STEP 8: Pseudotime Distribution by Tissue Type and Cell Type
+```{r pseudotime_by_tissue}
+# Violin plots showing whether cells from different tissue types
+# occupy different pseudotime positions — validates NL→CA→LN ordering
+# =============================================================================
+
+# Extract pseudotime + metadata
+pt_df <- data.frame(
+    pseudotime  = pseudotime(cds_full),
+    cell_type   = seurat_obj$cell.type,
+    tissue_type = seurat_obj$tissue.type,
+    hpv_status  = seurat_obj$hpv,
+    stringsAsFactors = FALSE
+) %>%
+    filter(is.finite(pseudotime)) %>%
+    mutate(tissue_type = factor(tissue_type, levels = c("NL","LP","CA","LN")))
+
+# Violin: pseudotime by tissue type (all cells)
+p1 <- ggplot(pt_df, aes(x = tissue_type, y = pseudotime,
+                          fill = tissue_type)) +
+    geom_violin(scale = "width", trim = TRUE, alpha = 0.8) +
+    geom_boxplot(width = 0.1, fill = "white", outlier.size = 0.2) +
+    scale_fill_manual(values = tissue_colors, guide = "none") +
+    labs(title = paste0(study_id, " | Pseudotime by Tissue Type"),
+         x = "Tissue Type", y = "Pseudotime") +
+    theme_classic(base_size = 12) +
+    theme(plot.title = element_text(hjust = 0.5))
+
+png(file.path(plot_dir,
+              paste0(study_id, "_trajectory_pseudotime_by_tissue.png")),
+    width = 8, height = 6, units = "in", res = 200, bg = "white")
+print(p1)
+dev.off()
+
+# Violin: pseudotime by cell type
+p2 <- ggplot(pt_df, aes(x = reorder(cell_type, pseudotime, median),
+                          y = pseudotime, fill = cell_type)) +
+    geom_violin(scale = "width", trim = TRUE, alpha = 0.8) +
+    geom_boxplot(width = 0.1, fill = "white", outlier.size = 0.2) +
+    scale_fill_manual(values = celltype_colors, guide = "none") +
+    labs(title = paste0(study_id, " | Pseudotime by Cell Type"),
+         x = "Cell Type", y = "Pseudotime") +
+    theme_classic(base_size = 12) +
+    theme(axis.text.x  = element_text(angle = 45, hjust = 1),
+          plot.title   = element_text(hjust = 0.5))
+
+png(file.path(plot_dir,
+              paste0(study_id, "_trajectory_pseudotime_by_celltype.png")),
+    width = 10, height = 6, units = "in", res = 200, bg = "white")
+print(p2)
+dev.off()
+
+cat("Pseudotime distribution plots saved ✅\n")
+
+# Print median pseudotime per tissue
+cat("\n=== Median Pseudotime by Tissue ===\n")
+pt_df %>%
+    group_by(tissue_type) %>%
+    summarise(median_pt = round(median(pseudotime), 2),
+              mean_pt   = round(mean(pseudotime),   2),
+              n_cells   = n()) %>%
+    print()
+```
+
+
+# STEP 9: T Cell Trajectory — Primary Analysis
+```{r tcell_trajectory}
+# Subset to T cells only for high-resolution exhaustion trajectory
+# Root = Naive_Memory state (biologically most primitive T cell state)
+# Expected trajectory: Naive_Memory → Progenitor_Tex → Exhausted
+#                                   ↘ Effector
+#                      Treg as separate branch
+# =============================================================================
+
+cat("Converting T cell Seurat → Monocle3 CDS...\n")
+DefaultAssay(seurat_tcell) <- "RNA"
+
+cds_tcell <- as.cell_data_set(seurat_tcell)
+
+# Transfer T cell UMAP from Seurat
+reducedDim(cds_tcell, "UMAP") <- Embeddings(seurat_tcell, "umap")
+
+# Cluster for graph partitions
+cds_tcell <- cluster_cells(cds_tcell, reduction_method = "UMAP",
+                             resolution = 1e-3)
+
+# Learn graph with tighter parameters for T cell resolution
+cat("Learning T cell principal graph...\n")
+cds_tcell <- learn_graph(cds_tcell,
+                          use_partition    = FALSE,  # single partition for T cells
+                          verbose          = FALSE,
+                          learn_graph_control = list(
+                              minimal_branch_len = 5,
+                              ncenter           = 50
+                          ))
+
+# Root = Naive_Memory T cells
+root_tcells <- colnames(seurat_tcell)[
+    seurat_tcell$tcell_state == "Naive_Memory"
+]
+cat("Root cells (Naive_Memory):", length(root_tcells), "\n")
+
+cds_tcell <- order_cells(cds_tcell, root_cells = root_tcells)
+
+cat("T cell pseudotime range:",
+    round(min(pseudotime(cds_tcell)[is.finite(pseudotime(cds_tcell))]), 2),
+    "to",
+    round(max(pseudotime(cds_tcell)[is.finite(pseudotime(cds_tcell))]), 2), "\n")
+cat("T cell trajectory complete ✅\n")
+```
+
+
+# STEP 10: Plot T Cell Trajectory
+```{r plot_tcell_trajectory}
+# Plot 1: T cell pseudotime
+png(file.path(plot_dir,
+              paste0(study_id, "_trajectory_Tcell_pseudotime.png")),
+    width = 10, height = 8, units = "in", res = 200, bg = "white")
+plot_cells(cds_tcell,
+           color_cells_by          = "pseudotime",
+           label_cell_groups       = FALSE,
+           label_leaves            = TRUE,
+           label_branch_points     = TRUE,
+           graph_label_size        = 4,
+           cell_size               = 0.5,
+           trajectory_graph_color  = "black",
+           trajectory_graph_segment_size = 1) +
+    scale_color_viridis(option = "C", name = "Pseudotime") +
+    ggtitle(paste0(study_id, " | T Cell Exhaustion Trajectory — Pseudotime")) +
+    theme_classic(base_size = 12)
+dev.off()
+
+# Plot 2: T cell states on trajectory
+png(file.path(plot_dir,
+              paste0(study_id, "_trajectory_Tcell_state.png")),
+    width = 10, height = 8, units = "in", res = 200, bg = "white")
+plot_cells(cds_tcell,
+           color_cells_by          = "tcell_state",
+           label_cell_groups       = TRUE,
+           label_leaves            = TRUE,
+           label_branch_points     = TRUE,
+           group_label_size        = 4,
+           cell_size               = 0.5,
+           trajectory_graph_color  = "grey30",
+           trajectory_graph_segment_size = 1) +
+    scale_color_manual(values = state_colors, name = "T Cell State") +
+    ggtitle(paste0(study_id, " | T Cell Exhaustion Trajectory — States")) +
+    theme_classic(base_size = 12)
+dev.off()
+
+# Plot 3: Tissue type on T cell trajectory
+png(file.path(plot_dir,
+              paste0(study_id, "_trajectory_Tcell_tissue.png")),
+    width = 10, height = 8, units = "in", res = 200, bg = "white")
+plot_cells(cds_tcell,
+           color_cells_by          = "tissue.type",
+           label_cell_groups       = FALSE,
+           label_leaves            = FALSE,
+           label_branch_points     = FALSE,
+           cell_size               = 0.5,
+           trajectory_graph_color  = "grey30",
+           trajectory_graph_segment_size = 1) +
+    scale_color_manual(values = tissue_colors, name = "Tissue") +
+    ggtitle(paste0(study_id, " | T Cell Trajectory — Tissue Type")) +
+    theme_classic(base_size = 12)
+dev.off()
+
+# Plot 4: HPV status on T cell trajectory
+png(file.path(plot_dir,
+              paste0(study_id, "_trajectory_Tcell_HPV.png")),
+    width = 10, height = 8, units = "in", res = 200, bg = "white")
+plot_cells(cds_tcell,
+           color_cells_by          = "hpv",
+           label_cell_groups       = FALSE,
+           label_leaves            = FALSE,
+           label_branch_points     = FALSE,
+           cell_size               = 0.5,
+           trajectory_graph_color  = "grey30",
+           trajectory_graph_segment_size = 1) +
+    scale_color_manual(values = hpv_colors, name = "HPV Status") +
+    ggtitle(paste0(study_id, " | T Cell Trajectory — HPV Status")) +
+    theme_classic(base_size = 12)
+dev.off()
+
+cat("T cell trajectory plots saved ✅\n")
+```
+
+
+# STEP 11: T Cell Pseudotime Distributions
+```{r tcell_pseudotime_dist}
+
+pt_tcell <- data.frame(
+    pseudotime  = pseudotime(cds_tcell),
+    state       = seurat_tcell$tcell_state,
+    tissue      = seurat_tcell$tissue.type,
+    hpv         = seurat_tcell$hpv,
+    stringsAsFactors = FALSE
+) %>%
+    filter(is.finite(pseudotime)) %>%
+    mutate(tissue = factor(tissue, levels = c("NL","LP","CA","LN")),
+           state  = factor(state,
+                           levels = c("Naive_Memory","Progenitor_Tex",
+                                      "Effector","Exhausted","Treg")))
+
+# Print summary
+cat("=== T Cell Pseudotime by State ===\n")
+pt_tcell %>%
+    group_by(state) %>%
+    summarise(median_pt = round(median(pseudotime), 2),
+              mean_pt   = round(mean(pseudotime),   2),
+              n_cells   = n()) %>%
+    arrange(median_pt) %>%
+    print()
+
+cat("\n=== T Cell Pseudotime by Tissue ===\n")
+pt_tcell %>%
+    group_by(tissue) %>%
+    summarise(median_pt = round(median(pseudotime), 2),
+              n_cells   = n()) %>%
+    print()
+
+# Plot: pseudotime by state (violin)
+p_state <- ggplot(pt_tcell, aes(x = state, y = pseudotime, fill = state)) +
+    geom_violin(scale = "width", trim = TRUE, alpha = 0.85) +
+    geom_boxplot(width = 0.08, fill = "white", outlier.size = 0.3) +
+    scale_fill_manual(values = state_colors, guide = "none") +
+    labs(title = paste0(study_id, " | T Cell Pseudotime by Exhaustion State"),
+         x = "T Cell State", y = "Pseudotime") +
+    theme_classic(base_size = 12) +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1),
+          plot.title  = element_text(hjust = 0.5))
+
+png(file.path(plot_dir,
+              paste0(study_id, "_trajectory_Tcell_pseudotime_by_state.png")),
+    width = 9, height = 6, units = "in", res = 200, bg = "white")
+print(p_state)
+dev.off()
+
+# Plot: pseudotime by tissue (violin)
+p_tissue <- ggplot(pt_tcell, aes(x = tissue, y = pseudotime, fill = tissue)) +
+    geom_violin(scale = "width", trim = TRUE, alpha = 0.85) +
+    geom_boxplot(width = 0.08, fill = "white", outlier.size = 0.3) +
+    scale_fill_manual(values = tissue_colors, guide = "none") +
+    labs(title = paste0(study_id, " | T Cell Pseudotime by Tissue Type"),
+         x = "Tissue", y = "Pseudotime") +
+    theme_classic(base_size = 12) +
+    theme(plot.title = element_text(hjust = 0.5))
+
+png(file.path(plot_dir,
+              paste0(study_id, "_trajectory_Tcell_pseudotime_by_tissue.png")),
+    width = 8, height = 6, units = "in", res = 200, bg = "white")
+print(p_tissue)
+dev.off()
+
+# Plot: pseudotime by HPV status (split violin)
+p_hpv <- ggplot(pt_tcell %>% filter(tissue == "CA"),
+                aes(x = hpv, y = pseudotime, fill = hpv)) +
+    geom_violin(scale = "width", trim = TRUE, alpha = 0.85) +
+    geom_boxplot(width = 0.08, fill = "white", outlier.size = 0.3) +
+    scale_fill_manual(values = hpv_colors, guide = "none") +
+    labs(title = paste0(study_id,
+                        " | T Cell Pseudotime HPV+ vs HPV– (CA only)"),
+         x = "HPV Status", y = "Pseudotime") +
+    theme_classic(base_size = 12) +
+    theme(plot.title = element_text(hjust = 0.5))
+
+png(file.path(plot_dir,
+              paste0(study_id, "_trajectory_Tcell_pseudotime_HPV.png")),
+    width = 7, height = 6, units = "in", res = 200, bg = "white")
+print(p_hpv)
+dev.off()
+
+cat("Pseudotime distribution plots saved ✅\n")
+```
+
+
+# STEP 12 : Key Exhaustion Gene Expression Along Pseudotime
+```{r exhaustion_genes_on_trajectory}
+# Plot canonical exhaustion genes on the T cell UMAP trajectory
+# Shows WHERE on the trajectory each gene peaks
+# =============================================================================
+
+# Fix gene_short_name for both CDS objects (SeuratWrappers v0.4.0 quirk)
+rowData(cds_tcell)$gene_short_name <- rownames(cds_tcell)
+rowData(cds_full)$gene_short_name  <- rownames(cds_full)
+cat("gene_short_name fixed for cds_tcell and cds_full ✅\n")
+
+exhaustion_genes <- c(
+    "CXCL13",   # Top DEG — exhausted T cell hallmark
+    "PDCD1",    # PD-1 — canonical exhaustion marker
+    "HAVCR2",   # TIM-3 — terminal exhaustion
+    "LAG3",     # LAG-3 — exhaustion checkpoint
+    "TIGIT",    # TIGIT — co-inhibitory receptor
+    "TCF7",     # TCF1 — progenitor exhausted T cell marker
+    "TOX",      # TOX — master exhaustion TF
+    "FOXP3",    # FOXP3 — Treg marker
+    "GZMB",     # Granzyme B — cytotoxic/effector
+    "PRF1"      # Perforin — cytotoxic function
+)
+
+# Check which genes are present
+available_genes <- exhaustion_genes[
+    exhaustion_genes %in% rowData(cds_tcell)$gene_short_name
+]
+cat("Exhaustion genes available:", paste(available_genes, collapse=", "), "\n")
+cat("Plotting", length(available_genes), "genes...\n")
+
+# Feature plots on trajectory UMAP — one PNG per gene
+for (gene in available_genes) {
+    png(file.path(plot_dir,
+                  paste0(study_id, "_trajectory_Tcell_", gene, ".png")),
+        width = 7, height = 6, units = "in", res = 200, bg = "white")
+    p <- plot_cells(cds_tcell,
+                    genes                         = gene,
+                    label_cell_groups             = FALSE,
+                    label_leaves                  = FALSE,
+                    label_branch_points           = FALSE,
+                    cell_size                     = 0.5,
+                    trajectory_graph_color        = "grey30",
+                    trajectory_graph_segment_size = 0.8) +
+        scale_color_viridis(option = "D", name = "Expression") +
+        ggtitle(paste0(study_id, " | T Cell Trajectory — ", gene)) +
+        theme_classic(base_size = 11)
+    print(p)
+    dev.off()
+    cat(gene, "saved ✅\n")
+}
+
+cat("\nAll", length(available_genes), "gene trajectory plots saved ✅\n")
+```
+
+
+# STEP 13: Gene Expression Curves Along Pseudotime
+```{r pseudotime_gene_curves}
+# Line plots showing how exhaustion gene expression changes
+# continuously along pseudotime — reveals ORDER of gene activation
+# in the exhaustion program
+# Expected order: TCF7 high early → TOX/PDCD1 mid → HAVCR2/CXCL13 late
+# =============================================================================
+
+library(tidyr)   # for pivot_longer
+
+# Extract normalized expression for available exhaustion genes
+expr_mat <- as.matrix(
+    GetAssayData(seurat_tcell, assay = "RNA", layer = "data")[
+        available_genes, , drop = FALSE
+    ]
+)
+
+# Build pseudotime dataframe from T cell CDS
+pt_vals <- pseudotime(cds_tcell)
+
+# Keep only cells with finite pseudotime that exist in both objects
+shared_cells <- intersect(
+    names(pt_vals)[is.finite(pt_vals)],
+    colnames(expr_mat)
+)
+cat("Shared cells for curve plotting:", length(shared_cells), "\n")
+
+# Build combined dataframe
+expr_long <- data.frame(
+    t(expr_mat[, shared_cells, drop = FALSE]),
+    pseudotime  = pt_vals[shared_cells],
+    state       = seurat_tcell$tcell_state[shared_cells],
+    hpv         = seurat_tcell$hpv[shared_cells],
+    tissue      = seurat_tcell$tissue.type[shared_cells],
+    stringsAsFactors = FALSE
+) %>%
+    pivot_longer(
+        cols      = all_of(available_genes),
+        names_to  = "gene",
+        values_to = "expression"
+    ) %>%
+    mutate(gene = factor(gene, levels = available_genes))
+
+cat("Long format rows:", nrow(expr_long), "\n")
+
+# ------------------------------------------------------------------
+# Plot 1: All exhaustion genes together — loess smoothed curves
+# ------------------------------------------------------------------
+p_curves <- ggplot(expr_long,
+                   aes(x = pseudotime, y = expression, color = gene)) +
+    geom_smooth(method  = "loess",
+                span    = 0.4,
+                se      = FALSE,
+                linewidth = 1.1) +
+    scale_color_brewer(palette = "Paired", name = "Gene") +
+    labs(title    = paste0(study_id,
+                           " | Exhaustion Gene Expression Along Pseudotime"),
+         subtitle = "Loess-smoothed normalized expression",
+         x        = "Pseudotime",
+         y        = "Normalized Expression") +
+    theme_classic(base_size = 12) +
+    theme(plot.title    = element_text(hjust = 0.5, face = "bold"),
+          plot.subtitle = element_text(hjust = 0.5, color = "grey40"),
+          legend.position = "right")
+
+png(file.path(plot_dir,
+              paste0(study_id, "_trajectory_Tcell_gene_curves.png")),
+    width = 12, height = 6, units = "in", res = 200, bg = "white")
+print(p_curves)
+dev.off()
+cat("Gene curves plot saved ✅\n")
+
+# ------------------------------------------------------------------
+# Plot 2: Faceted per gene — easier to read individual dynamics
+# ------------------------------------------------------------------
+p_facet <- ggplot(expr_long,
+                  aes(x = pseudotime, y = expression, color = gene)) +
+    geom_smooth(method    = "loess",
+                span      = 0.4,
+                se        = TRUE,
+                alpha     = 0.15,
+                linewidth = 1) +
+    scale_color_brewer(palette = "Paired", guide = "none") +
+    facet_wrap(~gene, scales = "free_y", ncol = 5) +
+    labs(title = paste0(study_id,
+                        " | Exhaustion Genes Along Pseudotime (Faceted)"),
+         x     = "Pseudotime",
+         y     = "Normalized Expression") +
+    theme_classic(base_size = 10) +
+    theme(plot.title  = element_text(hjust = 0.5, face = "bold"),
+          strip.text  = element_text(face = "bold"),
+          axis.text.x = element_text(angle = 30, hjust = 1))
+
+png(file.path(plot_dir,
+              paste0(study_id, "_trajectory_Tcell_gene_curves_faceted.png")),
+    width = 14, height = 6, units = "in", res = 200, bg = "white")
+print(p_facet)
+dev.off()
+cat("Faceted gene curves plot saved ✅\n")
+
+# ------------------------------------------------------------------
+# Plot 3: HPV+ vs HPV– comparison — key exhaustion genes
+# ------------------------------------------------------------------
+hpv_genes <- c("CXCL13", "PDCD1", "HAVCR2", "TOX")
+hpv_genes  <- hpv_genes[hpv_genes %in% available_genes]
+cat("HPV comparison genes:", paste(hpv_genes, collapse=", "), "\n")
+
+hpv_df <- expr_long %>%
+    filter(gene %in% hpv_genes,
+           !is.na(hpv),
+           hpv %in% c("HPV+", "HPV-"))
+
+if (nrow(hpv_df) > 0) {
+    p_hpv_curves <- ggplot(hpv_df,
+                           aes(x        = pseudotime,
+                               y        = expression,
+                               color    = hpv,
+                               fill     = hpv,
+                               linetype = hpv)) +
+        geom_smooth(method    = "loess",
+                    span      = 0.5,
+                    se        = TRUE,
+                    alpha     = 0.12,
+                    linewidth = 1.1) +
+        scale_color_manual(values = c("HPV+" = "#E41A1C",
+                                      "HPV-" = "#377EB8"),
+                           name   = "HPV Status") +
+        scale_fill_manual(values  = c("HPV+" = "#E41A1C",
+                                      "HPV-" = "#377EB8"),
+                          guide   = "none") +
+        scale_linetype_manual(values = c("HPV+" = "solid",
+                                         "HPV-" = "dashed"),
+                              guide  = "none") +
+        facet_wrap(~gene, scales = "free_y", ncol = 2) +
+        labs(title    = paste0(study_id,
+                               " | Exhaustion Genes Along Pseudotime: HPV+ vs HPV–"),
+             subtitle = "Loess-smoothed | shaded = 95% CI",
+             x        = "Pseudotime",
+             y        = "Normalized Expression") +
+        theme_classic(base_size = 11) +
+        theme(plot.title     = element_text(hjust = 0.5, face = "bold"),
+              plot.subtitle  = element_text(hjust = 0.5, color = "grey40"),
+              strip.text     = element_text(face = "bold"),
+              legend.position = "top")
+
+    png(file.path(plot_dir,
+                  paste0(study_id, "_trajectory_Tcell_HPV_gene_curves.png")),
+        width = 10, height = 8, units = "in", res = 200, bg = "white")
+    print(p_hpv_curves)
+    dev.off()
+    cat("HPV gene curves plot saved ✅\n")
+} else {
+    cat("No HPV data found — skipping HPV curve plot\n")
+}
+
+cat("Plots saved:\n")
+cat("  1.", paste0(study_id, "_trajectory_Tcell_gene_curves.png"), "\n")
+cat("  2.", paste0(study_id, "_trajectory_Tcell_gene_curves_faceted.png"), "\n")
+cat("  3.", paste0(study_id, "_trajectory_Tcell_HPV_gene_curves.png"), "\n")
+```
+
+
+# STEP 14: Reprocess CDS Through Monocle3's Own Pipeline
+```{r reprocess_monocle3}
+# Seurat v5 stores PCA differently — Monocle3 graph_test needs its own
+# preprocess_cds → reduce_dimension pipeline to work correctly
+# =============================================================================
+
+cat("Reprocessing cds_tcell through Monocle3 pipeline...\n")
+
+# Step 1: Preprocess within Monocle3 (PCA)
+cds_tcell <- preprocess_cds(
+    cds_tcell,
+    num_dim   = 50,
+    method    = "PCA",
+    verbose   = TRUE
+)
+cat("Preprocessing done ✅\n")
+
+# Step 2: Reduce dimensions within Monocle3 (UMAP)
+cds_tcell <- reduce_dimension(
+    cds_tcell,
+    reduction_method  = "UMAP",
+    preprocess_method = "PCA",
+    verbose           = TRUE
+)
+cat("Dimension reduction done ✅\n")
+
+# Step 3: Re-cluster cells
+cds_tcell <- cluster_cells(
+    cds_tcell,
+    reduction_method = "UMAP",
+    resolution       = 1e-3
+)
+cat("Clustering done ✅\n")
+
+# Step 4: Re-learn principal graph
+cat("Re-learning principal graph...\n")
+cds_tcell <- learn_graph(
+    cds_tcell,
+    use_partition    = FALSE,
+    verbose          = FALSE,
+    learn_graph_control = list(
+        minimal_branch_len = 5,
+        ncenter           = 50
+    )
+)
+cat("Graph learned ✅\n")
+
+# Step 5: Re-order cells with Naive_Memory root
+root_tcells <- colnames(seurat_tcell)[
+    seurat_tcell$tcell_state == "Naive_Memory"
+]
+cat("Root cells:", length(root_tcells), "\n")
+
+cds_tcell <- order_cells(cds_tcell, root_cells = root_tcells)
+
+cat("Pseudotime range:",
+    round(min(pseudotime(cds_tcell)[is.finite(pseudotime(cds_tcell))]), 2),
+    "to",
+    round(max(pseudotime(cds_tcell)[is.finite(pseudotime(cds_tcell))]), 2), "\n")
+
+# Step 6: Fix gene_short_name again (lost after reprocessing)
+rowData(cds_tcell)$gene_short_name <- rownames(cds_tcell)
+cat("gene_short_name fixed ✅\n")
+
+cat("\nReprocessing complete — now re-run Step 14 ✅\n")
+```
+
+
+
+# STEP 15: Graph-Autocorrelation Test — Genes Varying Along Pseudotime
+```{r graph_test}
+# Moran's I test identifies genes whose expression significantly
+# changes along the trajectory (not random spatial distribution)
+# High Moran's I = gene expression is structured along pseudotime
+# This is the statistical backbone of trajectory DE analysis
+# =============================================================================
+
+cat("Running graph autocorrelation test (Moran's I)...\n")
+cat("This may take 5-10 minutes...\n")
+
+# Ensure gene_short_name is set (in case Step 12 was run separately)
+rowData(cds_tcell)$gene_short_name <- rownames(cds_tcell)
+
+# Run Moran's I test on T cell trajectory
+cds_tcell_pr <- graph_test(
+    cds_tcell,
+    neighbor_graph = "principal_graph",
+    cores          = 1
+)
+
+cat("Test complete ✅\n")
+cat("Columns returned:", paste(names(cds_tcell_pr), collapse=", "), "\n")
+
+# Filter significant trajectory-variable genes
+traj_genes <- cds_tcell_pr %>%
+    filter(q_value < 0.05, status == "OK") %>%
+    arrange(desc(morans_I)) %>%
+    select(gene_short_name, morans_I, q_value)
+
+cat("\n=== Top 20 Trajectory-Variable Genes (Moran's I) ===\n")
+print(head(traj_genes, 20))
+
+# Check our key exhaustion genes specifically
+cat("\n=== Exhaustion Genes in Trajectory Test ===\n")
+key_genes <- c("CXCL13","PDCD1","HAVCR2","LAG3","TIGIT",
+               "TCF7","TOX","FOXP3","GZMB","PRF1")
+traj_genes %>%
+    filter(gene_short_name %in% key_genes) %>%
+    arrange(desc(morans_I)) %>%
+    print()
+
+# Save full results
+write.csv(
+    traj_genes,
+    file.path(result_dir,
+              paste0(study_id, "_trajectory_Tcell_variable_genes.csv")),
+    row.names = FALSE
+)
+
+cat("\nTotal trajectory-variable genes:", nrow(traj_genes), "\n")
+cat("Results saved ✅\n")
+```
+
+
+
+# STEP 16: Gene Co-expression Modules Along T Cell Trajectory
+```{r gene_modules}
+# Groups co-expressed trajectory-variable genes into modules.
+# Each module = a gene program activated at a specific pseudotime point.
+# Expected programs:
+#   Module 1: Effector/Exhaustion  — CXCL13, LAG3, HAVCR2, GZMB, PRF1
+#   Module 2: Proliferation        — STMN1, TYMS, TUBA1B
+#   Module 3: Intermediate/Stress  — TCF7, HSP90AA1, HSPA1A
+#   Module 4: Minor contamination  — FXYD3, S100A14
+#   Module 5: Treg                 — FOXP3, TNFRSF18
+#   Module 6: Tumor-associated     — ELF3, MAGEA4, MDK
+# =============================================================================
+
+# Fix 1: Increase resolution to get better module separation
+rowData(cds_tcell)$gene_short_name <- rownames(cds_tcell)
+
+cat("Finding gene modules with higher resolution...\n")
+gene_modules <- find_gene_modules(
+    cds_tcell[top_traj_genes, ],
+    resolution  = 0.1,    # increased from 1e-2
+    random_seed = 42
+)
+
+n_modules <- length(unique(gene_modules$module))
+cat("Gene modules found:", n_modules, "\n")
+cat("Module sizes:\n")
+print(table(gene_modules$module))
+
+# Exhaustion gene assignments
+cat("\n=== Key Exhaustion Gene Module Assignments ===\n")
+gene_modules %>%
+    filter(id %in% key_genes) %>%
+    arrange(module) %>%
+    select(id, module) %>%
+    print()
+
+# Top 5 genes per module
+cat("\n=== Top 5 Genes per Module (by Moran's I) ===\n")
+gene_modules %>%
+    left_join(
+        traj_genes_tcell %>% rename(id = gene_short_name),
+        by = "id"
+    ) %>%
+    group_by(module) %>%
+    arrange(desc(morans_I)) %>%
+    slice_head(n = 5) %>%
+    select(module, id, morans_I) %>%
+    print(n = Inf)
+
+# Fix 2: aggregate_gene_expression — use named vector format for v1.4.26
+# Extract cell state as named character vector
+cell_state_vec <- setNames(
+    as.character(seurat_tcell$tcell_state),
+    colnames(seurat_tcell)
+)
+
+# Keep only cells present in cds_tcell
+shared <- intersect(names(cell_state_vec), colnames(cds_tcell))
+cell_state_vec <- cell_state_vec[shared]
+
+cat("\nAggregating by T cell state...\n")
+cat("Shared cells:", length(shared), "\n")
+
+# Manual aggregation — robust alternative to aggregate_gene_expression
+# Get module assignments as named vector
+module_vec <- setNames(
+    as.character(gene_modules$module),
+    gene_modules$id
+)
+
+# Extract expression matrix
+expr_cds <- as.matrix(
+    exprs(cds_tcell)[gene_modules$id, shared, drop = FALSE]
+)
+
+# Aggregate: mean expression per module per cell state
+states    <- unique(cell_state_vec)
+state_order <- c("Naive_Memory","Progenitor_Tex","Effector","Exhausted","Treg")
+states    <- state_order[state_order %in% states]
+modules   <- sort(unique(gene_modules$module))
+
+agg_mat_state <- sapply(states, function(s) {
+    cells_s <- names(cell_state_vec)[cell_state_vec == s]
+    cells_s <- intersect(cells_s, colnames(expr_cds))
+    sapply(modules, function(m) {
+        genes_m <- gene_modules$id[gene_modules$module == m]
+        genes_m <- intersect(genes_m, rownames(expr_cds))
+        mean(expr_cds[genes_m, cells_s, drop = FALSE], na.rm = TRUE)
+    })
+})
+rownames(agg_mat_state) <- paste0("Module ", modules)
+cat("Aggregation matrix dimensions:", dim(agg_mat_state), "\n")
+print(round(agg_mat_state, 3))
+
+# Plot heatmap — T cell states
+png(file.path(plot_dir,
+              paste0(study_id, "_trajectory_Tcell_modules_heatmap.png")),
+    width = 9, height = 6, units = "in", res = 200, bg = "white")
+pheatmap::pheatmap(
+    agg_mat_state,
+    scale        = "row",
+    color        = colorRampPalette(
+                       rev(RColorBrewer::brewer.pal(9, "RdBu"))
+                   )(50),
+    fontsize     = 12,
+    fontsize_row = 11,
+    fontsize_col = 11,
+    angle_col    = 45,
+    main         = paste0(study_id,
+                          " | Gene Modules × T Cell Exhaustion States"),
+    border_color = "white"
+)
+dev.off()
+cat("Module × state heatmap saved ✅\n")
+
+# Aggregate by tissue type
+tissue_vec <- setNames(
+    as.character(seurat_tcell$tissue.type),
+    colnames(seurat_tcell)
+)
+tissue_vec   <- tissue_vec[shared]
+tissue_order <- c("NL","LP","CA","LN")
+tissues      <- tissue_order[tissue_order %in% unique(tissue_vec)]
+
+agg_mat_tissue <- sapply(tissues, function(t) {
+    cells_t <- names(tissue_vec)[tissue_vec == t]
+    cells_t <- intersect(cells_t, colnames(expr_cds))
+    sapply(modules, function(m) {
+        genes_m <- gene_modules$id[gene_modules$module == m]
+        genes_m <- intersect(genes_m, rownames(expr_cds))
+        mean(expr_cds[genes_m, cells_t, drop = FALSE], na.rm = TRUE)
+    })
+})
+rownames(agg_mat_tissue) <- paste0("Module ", modules)
+cat("Tissue aggregation matrix:\n")
+print(round(agg_mat_tissue, 3))
+
+# Plot heatmap — tissue types
+png(file.path(plot_dir,
+              paste0(study_id, "_trajectory_Tcell_modules_tissue_heatmap.png")),
+    width = 8, height = 6, units = "in", res = 200, bg = "white")
+pheatmap::pheatmap(
+    agg_mat_tissue,
+    scale        = "row",
+    color        = colorRampPalette(
+                       rev(RColorBrewer::brewer.pal(9, "RdBu"))
+                   )(50),
+    fontsize     = 12,
+    fontsize_row = 11,
+    fontsize_col = 11,
+    angle_col    = 45,
+    main         = paste0(study_id,
+                          " | Gene Modules × Tissue Type"),
+    border_color = "white"
+)
+dev.off()
+cat("Module × tissue heatmap saved ✅\n")
+
+# Save module assignments
+write.csv(
+    gene_modules,
+    file.path(result_dir,
+              paste0(study_id, "_trajectory_Tcell_gene_modules.csv")),
+    row.names = FALSE
+)
+cat("Module assignments saved ✅\n")
+```
+
+
+# STEP 17: Save Pseudotime Values + Final Summary
+```{r save_pseudotime}
+
+cat("Saving all results...\n")
+
+# --- T cell pseudotime CSV ---
+pt_tcell_out <- data.frame(
+    cell_barcode = colnames(cds_tcell),
+    pseudotime   = pseudotime(cds_tcell),
+    state        = seurat_tcell$tcell_state,
+    tissue       = seurat_tcell$tissue.type,
+    hpv          = seurat_tcell$hpv,
+    patient      = seurat_tcell$patient.id,
+    stringsAsFactors = FALSE
+)
+write.csv(
+    pt_tcell_out,
+    file.path(result_dir,
+              paste0(study_id, "_Tcell_pseudotime.csv")),
+    row.names = FALSE
+)
+cat("T cell pseudotime CSV saved ✅\n")
+
+# --- Full TME pseudotime CSV ---
+pt_full_out <- data.frame(
+    cell_barcode = colnames(cds_full),
+    pseudotime   = pseudotime(cds_full),
+    cell_type    = seurat_obj$cell.type,
+    tissue       = seurat_obj$tissue.type,
+    hpv          = seurat_obj$hpv,
+    stringsAsFactors = FALSE
+)
+write.csv(
+    pt_full_out,
+    file.path(result_dir,
+              paste0(study_id, "_fullTME_pseudotime.csv")),
+    row.names = FALSE
+)
+cat("Full TME pseudotime CSV saved ✅\n")
+
+# --- Save CDS objects ---
+saveRDS(
+    cds_tcell,
+    file.path(result_dir,
+              paste0(study_id, "_monocle3_Tcell.rds"))
+)
+cat("T cell CDS RDS saved ✅\n")
+
+saveRDS(
+    cds_full,
+    file.path(result_dir,
+              paste0(study_id, "_monocle3_fullTME.rds"))
+)
+cat("Full TME CDS RDS saved ✅\n")
+
+# --- Final Summary ---
+cat("\n=======================================================\n")
+cat("      SCRIPT 08 — TRAJECTORY ANALYSIS SUMMARY\n")
+cat("=======================================================\n")
+cat("Full TME cells with finite pseudotime :",
+    sum(is.finite(pseudotime(cds_full))), "\n")
+cat("T cells with finite pseudotime        :",
+    sum(is.finite(pseudotime(cds_tcell))), "\n")
+cat("T cell trajectory-variable genes      :", nrow(traj_genes), "\n")
+cat("T cell gene modules                   :",
+    length(unique(gene_modules$module)), "\n")
+
+cat("\n--- Module Interpretation ---\n")
+cat("Module 1: Effector/Exhaustion program",
+    "(LAG3, GZMB, PRF1, CXCL13, TIGIT, PDCD1, HAVCR2, TOX)\n")
+cat("Module 2: Proliferation program",
+    "(STMN1, TYMS, TUBA1B — cell cycle)\n")
+cat("Module 3: Intermediate/Stress program",
+    "(TCF7, HSP90AA1, HSPA1A — naive-to-exhaustion transition)\n")
+cat("Module 4: Tumor-contamination signal",
+    "(FXYD3, S100A14 — low expression, minor)\n")
+cat("Module 5: Treg program",
+    "(FOXP3, TNFRSF18, ACTB — highest in Treg)\n")
+cat("Module 6: Tumor-associated signal",
+    "(ELF3, MAGEA4, MDK — very low expression)\n")
+
+cat("\n--- Disease Progression (Module 1 Exhaustion) ---\n")
+cat("NL: 2.44 → LP: 4.48 → CA: 6.73 → LN: 7.42\n")
+cat("3× increase in exhaustion program NL→LN\n")
+
+cat("\nPlots saved to   :", plot_dir, "\n")
+cat("Results saved to :", result_dir, "\n")
+cat("\nAll outputs saved ✅\n")
+cat("=======================================================\n")
+```
