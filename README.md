@@ -72,4 +72,5 @@ monocle3  1.4.26 - Trajectory analysis
 SeuratWrappers - 0.4.0 - Seurat→Monocle3 conversion
 R - 4.5 - Analysis environment
 
-# The detailed methodology, statistical definitions, and step-by-step rationale all live in the GSE181919_Methods_Report.pdf and GSE181919_ReadMe.txt
+
+**The detailed methodology, statistical definitions, and step-by-step rationale all live in the GSE181919_Methods_Report.pdf and GSE181919_ReadMe.txt**
